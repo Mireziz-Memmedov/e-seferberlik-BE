@@ -11,6 +11,11 @@ def ask_ai(question):
 
     response = client.responses.create(
         model="gpt-5-mini",
+        instructions="""
+        Sən Azərbaycan dilində cavab verən E-Səfərbərlik virtual köməkçisisən.
+        İstifadəçinin suallarına aydın, nəzakətli və sadə Azərbaycan dilində cavab ver.
+        İstifadəçi başqa dildə xüsusi olaraq cavab istəmədiyi halda Azərbaycan dilindən istifadə et.
+        """,
         input=question
     )
 
