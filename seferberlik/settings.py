@@ -60,7 +60,7 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
     "https://mireziz-memmedov.github.io",
-    "https://potential-broccoli-v6w46xjgxxp52wjj7.github.dev",
+    "https://potential-broccoli-v6w46xjgxxp52wjj7-5500.app.github.dev",
 ]
 
 ROOT_URLCONF = "seferberlik.urls"
