@@ -5,6 +5,8 @@ from rest_framework import status
 from .models import NewsUsers, Conversation, Message
 from .serializers import ConversationSerializer, MessageSerializer
 
+from .ai import ask_ai
+
 
 @api_view(['GET', 'POST'])
 def conversations(request):
@@ -53,3 +55,20 @@ def messages(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+@api_view(['POST'])
+def chatbot(request):
+
+    question = request.data.get('question')
+
+    if not question:
+        return Response(
+            {'error': 'Question is required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    answer = ask_ai(question)
+
+    return Response({
+        'question': question,
+        'answer': answer
+    })
