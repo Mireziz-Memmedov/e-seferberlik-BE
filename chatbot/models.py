@@ -36,3 +36,20 @@ class Law(models.Model):
 
     def __str__(self):
         return self.title
+
+class Article(models.Model):
+    law = models.ForeignKey(
+        Law,
+        on_delete=models.CASCADE,
+        related_name='articles'
+    )
+
+    number = models.CharField(max_length=50)
+    title = models.CharField(max_length=500, blank=True)
+    content = models.TextField()
+
+    class Meta:
+        db_table = 'Article'
+
+    def __str__(self):
+        return f"{self.law.title} - Maddə {self.number}"
