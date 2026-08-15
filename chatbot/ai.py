@@ -1,6 +1,5 @@
 from openai import OpenAI
 from django.conf import settings
-
 from .models import Law
 
 
@@ -14,9 +13,9 @@ def ask_ai(question):
     laws = Law.objects.all()
 
     law_context = "\n\n".join(
-        f"QANUN: {law.title}\n"
-        f"MƏTN:\n{law.content}\n"
-        f"MƏNBƏ: {law.source_url or 'Mənbə göstərilməyib'}"
+        f"Qanun: {law.title}\n"
+        f"Mətn: {law.content}\n"
+        f"Mənbə: {law.source_url or 'Mənbə göstərilməyib'}"
         for law in laws
     )
 
@@ -27,11 +26,10 @@ def ask_ai(question):
 Sən E-Səfərbərlik platformasının Azərbaycan dilində cavab verən
 virtual hüquqi məlumat köməkçisisən.
 
-İstifadəçinin sualına aşağıda verilmiş qanunvericilik məlumatlarını
-diqqətlə oxuyaraq və həmin məlumatlara əsaslanaraq cavab ver.
+İstifadəçinin sualına yalnız aşağıda təqdim olunan qanunvericilik
+məlumatlarına əsaslanaraq cavab ver.
 
-QAYDALAR:
-
+Qaydalar:
 - Həmişə sadə, aydın, nəzakətli və təbii Azərbaycan dilində cavab ver.
 - İstifadəçi yalnız salamlaşırsa, nəzakətlə salamlaş və necə kömək edə biləcəyini soruş.
 - İstifadəçi konkret sual verirsə, salamlaşma ilə cavaba başlama və birbaşa sualı cavablandır.
