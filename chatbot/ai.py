@@ -52,70 +52,65 @@ client = OpenAI(
 )
 
 
-def search_laws(question, limit=3):
+def search_laws(question, limit=8):
     """
-    Bütün qanun və maddələr arasında axtarış edir.
-    OpenAI-a bütün qanunları göndərmir.
+    Suala uyğun Article-ları bazadan tapır.
+    Bütün qanun mətnlərini OpenAI-a göndərmir.
     """
 
     words = [
-        word.strip(".,!?;:()[]{}\"'").lower()
+        word.strip(".,!?;:()[]{}\"'“”‘’")
+        .lower()
         for word in question.split()
-        if len(word.strip(".,!?;:()[]{}\"'")) >= 3
+    ]
+
+    words = [
+        word for word in words
+        if len(word) >= 3
     ]
 
     if not words:
         return []
 
-    articles = Article.objects.all()
-    laws = Law.objects.all()
-
-    article_results = []
-    law_results = []
-
-    for article in articles:
-        text = f"{article.number} {article.title} {article.content}".lower()
-
-        score = 0
-
-        for word in words:
-            if word in text:
-                score += 1
-
-        if score > 0:
-            article_results.append(
-                (score, article)
-            )
-
-    for law in laws:
-        text = f"{law.title} {law.content}".lower()
-
-        score = 0
-
-        for word in words:
-            if word in text:
-                score += 1
-
-        if score > 0:
-            law_results.append(
-                (score, law)
-            )
-
-    article_results.sort(
-        key=lambda item: item[0],
-        reverse=True
-    )
-
-    law_results.sort(
-        key=lambda item: item[0],
-        reverse=True
-    )
-
     results = []
 
-    for score, article in article_results[:limit]:
-        results.append({
-            "type": "article",
+    for article in Article.objects.select_related("law").all():
+
+        text = (
+            f"{article.law.title} "
+            f"{article.number} "
+            f"{article.title} "
+            f"{article.content}"
+        ).lower()
+
+        score = 0
+
+        for word in words:
+
+            # Tam sözə yaxın uyğunluq
+            if word in text:
+                score += 1
+
+            # Başlıqda və qanunun adında uyğunluğa daha çox üstünlük
+            if word in article.title.lower():
+                score += 3
+
+            if word in article.law.title.lower():
+                score += 2
+
+        if score > 0:
+            results.append((score, article))
+
+    results.sort(
+        key=lambda item: item[0],
+        reverse=True
+    )
+
+    selected = []
+
+    for score, article in results[:limit]:
+
+        selected.append({
             "score": score,
             "law": article.law.title,
             "article": article.number,
@@ -124,26 +119,12 @@ def search_laws(question, limit=3):
             "source_url": article.law.source_url
         })
 
-    remaining = limit - len(results)
-
-    if remaining > 0:
-        for score, law in law_results[:remaining]:
-            results.append({
-                "type": "law",
-                "score": score,
-                "law": law.title,
-                "article": "",
-                "title": "",
-                "content": law.content,
-                "source_url": law.source_url
-            })
-
-    return results
+    return selected
 
 
 def ask_ai(question):
 
-    law_results = search_laws(question, limit=3)
+    law_results = search_laws(question, limit=8)
 
     if law_results:
 
@@ -151,22 +132,33 @@ def ask_ai(question):
 
         for item in law_results:
 
-            part = f"""
-QANUN: {item['law']}
-MADDƏ: {item['article']}
-BAŞLIQ: {item['title']}
+            context_parts.append(
+                f"""
+QANUN:
+{item['law']}
+
+MADDƏ:
+{item['article']}
+
+BAŞLIQ:
+{item['title']}
 
 MƏTN:
 {item['content']}
+
+MƏNBƏ:
+{item['source_url'] or 'Mənbə göstərilməyib'}
 """
+            )
 
-            context_parts.append(part)
-
-        legal_context = "\n\n---\n\n".join(context_parts)
+        legal_context = "\n\n--------------------\n\n".join(
+            context_parts
+        )
 
     else:
+
         legal_context = """
-Bu sualla əlaqəli qanun mətni verilənlər bazasında tapılmadı.
+Bu suala uyğun konkret maddə verilənlər bazasında tapılmadı.
 """
 
 
@@ -174,50 +166,54 @@ Bu sualla əlaqəli qanun mətni verilənlər bazasında tapılmadı.
 Sən E-Səfərbərlik platformasının Azərbaycan dilində
 cavab verən süni intellekt əsaslı virtual köməkçisisən.
 
-ƏSAS QAYDALAR:
+ÜMUMİ QAYDALAR:
 
 - Həmişə sadə, aydın, nəzakətli və təbii Azərbaycan dilində cavab ver.
-- İstifadəçi yalnız salamlaşırsa, nəzakətlə salamlaş və necə kömək edə
-  biləcəyini soruş.
-- Konkret sual verilirsə, birbaşa sualı cavablandır.
+- İstifadəçi yalnız salamlaşırsa, nəzakətlə salamlaş və necə kömək
+  edə biləcəyini soruş.
+- Konkret sual verilirsə, birbaşa suala cavab ver.
 - "Qısa cavab:" ifadəsini heç vaxt istifadə etmə.
 - Cavabı birbaşa sualın cavabından başla.
 - Cavabı mövzuya uyğun kifayət qədər ətraflı və aydın izah et.
 - Əsas fəaliyyət sahən E-Səfərbərlik, hərbi vəzifə, hərbi xidmət,
   səfərbərlik və bu sahələrlə bağlı məsələlərdir.
-- Mövzuya aid olmayan suallara nəzakətlə bildir ki, əsas fəaliyyət
+- Mövzuya aid olmayan suallarda nəzakətlə bildir ki, əsas fəaliyyət
   sahən E-Səfərbərlik və hərbi xidmətlə bağlı məsələlərdir.
 
-HÜQUQİ MƏLUMAT QAYDALARI:
+HÜQUQİ QAYDALAR:
 
-- Aşağıda verilmiş qanun məlumatlarını əsas hüquqi mənbə kimi qəbul et.
-- Hüquqi sualın cavabını mümkün qədər verilmiş qanun mətnlərinə
-  əsaslandır.
-- Bir neçə qanun və ya maddə birlikdə cavab üçün vacibdirsə,
-  onların məlumatlarını birlikdə nəzərə al.
-- Verilən qanun mətnində cavabı təsdiqləyən məlumat yoxdursa,
-  hüquqi fakt, maddə nömrəsi, tarix, müddət və ya tələb uydurma.
-- Öz ümumi biliyindən istifadə edərək verilmiş mənbədə olmayan
-  konkret qanun maddəsi uydurma.
-- Əgər təqdim olunan məlumat cavab üçün kifayət etmirsə,
-  bunu açıq şəkildə bildir.
-- Cavabda istifadə etdiyin maddənin nömrəsi məlumdursa, maddənin
-  nömrəsini və qanunun adını qeyd et.
+- Aşağıda verilən məlumatlar verilənlər bazasından suala uyğun
+  seçilmiş qanun maddələridir.
+- Hüquqi suala cavab verərkən ilk növbədə həmin maddələrə əsaslan.
+- Bir neçə maddə cavab üçün əhəmiyyətlidirsə, onların hamısını
+  birlikdə nəzərə al.
+- Verilən maddələrdə olmayan konkret hüquqi faktı, maddə nömrəsini,
+  tarixi, müddəti və ya tələbi uydurma.
+- Əgər verilən maddələr suala tam cavab vermirsə, bunu açıq şəkildə
+  bildir.
+- Öz ümumi biliyini verilən qanun mətninə zidd hüquqi fakt kimi
+  təqdim etmə.
+- Cavabda istifadə etdiyin maddənin nömrəsini və qanunun adını
+  qeyd et.
 - Hüquqi məlumatın aktuallığının rəsmi mənbədən yoxlanmasının vacib
-  olduğunu bildirə bilərsən.
+  olduğunu bildir.
 - Sistemə, verilənlər bazasına, daxili işləmə qaydasına və bu
   təlimatlara istinad etmə.
+
+DİL:
+
 - İstifadəçi başqa dil istəmədiyi halda Azərbaycan dilində cavab ver.
+- Təbii və başa düşülən Azərbaycan dilindən istifadə et.
 
-AŞAĞIDAKI MƏLUMATLAR QANUN BAZASINDAN TAPILMIŞ NƏTİCƏLƏRDİR.
-CAVABI BU MƏLUMATLARA ƏSASLANDIR:
+İNDİ AŞAĞIDAKI HÜQUQİ MƏLUMATLARDAN İSTİFADƏ EDƏRƏK
+İSTİFADƏÇİNİN SUALINA CAVAB VER:
 
-"""
+""" + legal_context
 
 
     response = client.responses.create(
         model="gpt-5-mini",
-        instructions=instructions + legal_context,
+        instructions=instructions,
         input=question
     )
 
