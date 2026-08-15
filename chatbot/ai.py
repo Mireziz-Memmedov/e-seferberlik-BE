@@ -54,8 +54,10 @@ client = OpenAI(
 )
 
 
-# Azərbaycan dilində çox ümumi və hüquqi axtarışa
-# ciddi fayda verməyən sözlər.
+# ============================================================
+# ÜMUMİ SÖZLƏR
+# ============================================================
+
 STOP_WORDS = {
     "mən",
     "sən",
@@ -70,7 +72,6 @@ STOP_WORDS = {
     "necə",
     "nə",
     "nədir",
-    "nədir?",
     "kim",
     "kimlər",
     "barədə",
@@ -89,7 +90,62 @@ STOP_WORDS = {
     "de",
     "deyin",
     "deyə",
+    "edə",
+    "edir",
+    "edilir",
+    "edilməsi",
 }
+
+
+# ============================================================
+# AZƏRBAYCAN DİLİ ÜÇÜN SADƏ SÖZ NORMALİZASİYASI
+# ============================================================
+
+SUFFIXES = [
+    "lərdən",
+    "lardan",
+    "lərə",
+    "lara",
+    "lərdə",
+    "larda",
+    "lərdən",
+    "lardan",
+    "lərin",
+    "ların",
+    "ləri",
+    "ları",
+    "lər",
+    "lar",
+    "dən",
+    "dan",
+    "dən",
+    "dan",
+    "ə",
+    "a",
+    "də",
+    "da",
+    "in",
+    "ın",
+    "un",
+    "ün",
+    "ni",
+    "nı",
+    "nu",
+    "nü",
+    "dir",
+    "dır",
+    "dur",
+    "dür",
+    "dır",
+    "dir",
+    "dur",
+    "dür",
+    "isə",
+    "mı",
+    "mi",
+    "mu",
+    "mü",
+]
 
 
 def normalize_word(word):
@@ -102,9 +158,65 @@ def normalize_word(word):
     ).lower()
 
 
+def word_variants(word):
+    """
+    Azərbaycan dilində şəkilçili söz üçün
+    mümkün əsas formaları yaradır.
+
+    Məsələn:
+
+    təlimdən -> təlim
+    təlimlər -> təlim
+    azaddır -> azad
+    çağırışdan -> çağırış
+    """
+
+    word = normalize_word(word)
+
+    if not word:
+        return []
+
+    variants = [word]
+
+    current = word
+
+    # Bir neçə şəkilçinin ardıcıl gəlməsi ehtimalına görə
+    # maksimum 2 dəfə kökaltma edirik.
+    for _ in range(2):
+
+        changed = False
+
+        for suffix in sorted(
+            SUFFIXES,
+            key=len,
+            reverse=True
+        ):
+
+            if (
+                current.endswith(suffix)
+                and len(current) - len(suffix) >= 4
+            ):
+
+                base = current[:-len(suffix)]
+
+                if base not in variants:
+                    variants.append(base)
+
+                current = base
+                changed = True
+                break
+
+        if not changed:
+            break
+
+    return variants
+
+
 def get_search_words(question):
     """
-    Sualdan mənalı axtarış sözlərini çıxarır.
+    Sualdan hüquqi baxımdan əhəmiyyətli sözləri çıxarır.
+
+    Həm orijinal sözü, həm də onun əsas formasını saxlayır.
     """
 
     words = []
@@ -122,11 +234,25 @@ def get_search_words(question):
         if word in STOP_WORDS:
             continue
 
-        if word not in words:
-            words.append(word)
+        variants = word_variants(word)
+
+        for variant in variants:
+
+            if len(variant) < 3:
+                continue
+
+            if variant in STOP_WORDS:
+                continue
+
+            if variant not in words:
+                words.append(variant)
 
     return words
 
+
+# ============================================================
+# HÜQUQİ AXTARIŞ
+# ============================================================
 
 def search_laws(question, limit=5):
 
@@ -135,26 +261,27 @@ def search_laws(question, limit=5):
     if not words:
         return []
 
-    # ---------------------------------------------------------
-    # 1. ƏVVƏLCƏ BÜTÜN MƏNALİ SÖZLƏRİ EYNİ MADDƏDƏ AXTARIRIQ
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # DB-dən ilkin namizədləri götürürük.
+    #
+    # Burada OR yalnız namizədləri tapmaq üçündür.
+    # Son qərarı aşağıdakı scoring sistemi verir.
+    # --------------------------------------------------------
 
-    strict_query = Q()
+    candidate_query = Q()
 
     for word in words:
 
-        word_query = (
+        candidate_query |= (
             Q(title__icontains=word)
             | Q(content__icontains=word)
             | Q(law__title__icontains=word)
         )
 
-        strict_query &= word_query
-
     articles = list(
         Article.objects
         .select_related("law")
-        .filter(strict_query)
+        .filter(candidate_query)
         .only(
             "id",
             "number",
@@ -166,47 +293,27 @@ def search_laws(question, limit=5):
         .distinct()
     )
 
-    # ---------------------------------------------------------
-    # 2. ƏGƏR HAMISI TAPILMADIYSA,
-    #    sözlərin çoxunun olduğu maddələri götürürük.
-    # ---------------------------------------------------------
-
     if not articles:
-
-        broad_query = Q()
-
-        for word in words:
-
-            broad_query |= (
-                Q(title__icontains=word)
-                | Q(content__icontains=word)
-                | Q(law__title__icontains=word)
-            )
-
-        articles = list(
-            Article.objects
-            .select_related("law")
-            .filter(broad_query)
-            .only(
-                "id",
-                "number",
-                "title",
-                "content",
-                "law__title",
-                "law__source_url",
-            )
-            .distinct()
-        )
+        return []
 
     results = []
 
-    question_normalized = " ".join(words)
+    # Sualın normal forması
+    normalized_question = " ".join(words)
 
     for article in articles:
 
-        article_title = (article.title or "").lower()
-        article_content = (article.content or "").lower()
-        law_title = (article.law.title or "").lower()
+        article_title = normalize_word(
+            article.title or ""
+        )
+
+        article_content = normalize_word(
+            article.content or ""
+        )
+
+        law_title = normalize_word(
+            article.law.title or ""
+        )
 
         full_text = (
             f"{article_title} "
@@ -215,74 +322,129 @@ def search_laws(question, limit=5):
         )
 
         score = 0
-        matched_words = 0
+        matched_words = set()
 
-        # -----------------------------------------------------
-        # Söz uyğunluğu
-        # -----------------------------------------------------
+        # ====================================================
+        # 1. SÖZ UYĞUNLUĞU
+        # ====================================================
 
         for word in words:
 
-            word_score = 0
+            content_match = word in article_content
+            title_match = word in article_title
+            law_match = word in law_title
 
-            if word in article_content:
-                word_score += 3
-                matched_words += 1
+            if content_match:
+                matched_words.add(word)
+                score += 6
 
-            if word in article_title:
-                word_score += 8
+            if title_match:
+                matched_words.add(word)
+                score += 15
 
-            if word in law_title:
-                word_score += 4
+            if law_match:
+                matched_words.add(word)
+                score += 3
 
-            score += word_score
+        # ====================================================
+        # 2. BÜTÜN ƏSAS SÖZLƏR MADDƏDƏ VARSA
+        # ====================================================
 
-        # -----------------------------------------------------
-        # Tam sual ifadəsinin maddədə olması
-        # -----------------------------------------------------
+        if words:
 
-        if question_normalized in full_text:
-            score += 30
+            coverage = (
+                len(matched_words) / len(words)
+            )
 
-        # -----------------------------------------------------
-        # İki və daha çox sözün ardıcıl gəlməsi
-        # -----------------------------------------------------
+            if coverage == 1:
+                score += 40
+
+            elif coverage >= 0.75:
+                score += 25
+
+            elif coverage >= 0.50:
+                score += 10
+
+        # ====================================================
+        # 3. ARDICIL İFADƏLƏR
+        # ====================================================
 
         if len(words) >= 2:
 
             for i in range(len(words) - 1):
 
-                phrase = f"{words[i]} {words[i + 1]}"
+                first = words[i]
+                second = words[i + 1]
+
+                phrase = f"{first} {second}"
 
                 if phrase in full_text:
-                    score += 10
+                    score += 20
 
-        # -----------------------------------------------------
-        # Bütün sözlər tapılıbsa əlavə üstünlük
-        # -----------------------------------------------------
+        # ====================================================
+        # 4. SUALIN ƏSAS MƏNASI
+        #
+        # Məsələn:
+        #
+        # "təlimdən azaddır"
+        #
+        # "təlim azad"
+        #
+        # kimi ardıcıl hissələrə üstünlük.
+        # ====================================================
 
-        if matched_words == len(words):
-            score += 25
+        if normalized_question in full_text:
+            score += 50
 
-        # -----------------------------------------------------
-        # Ən azı bir ciddi uyğunluq varsa nəticəyə əlavə et
-        # -----------------------------------------------------
+        # ====================================================
+        # 5. MADDƏ BAŞLIĞINDA ƏSAS SÖZLƏR
+        # ====================================================
 
-        if matched_words > 0:
+        title_matches = 0
 
-            results.append(
-                {
-                    "score": score,
-                    "matched_words": matched_words,
-                    "total_words": len(words),
-                    "article": article,
-                }
-            )
+        for word in words:
 
-    # ---------------------------------------------------------
-    # Əvvəl bütün sözləri tapanlar,
-    # sonra score-a görə sıralanır
-    # ---------------------------------------------------------
+            if word in article_title:
+                title_matches += 1
+
+        if title_matches:
+            score += title_matches * 12
+
+        # ====================================================
+        # 6. QANUNUN ADINDA YALNIZ UYĞUN SÖZLƏR
+        # ====================================================
+
+        law_matches = 0
+
+        for word in words:
+
+            if word in law_title:
+                law_matches += 1
+
+        if law_matches:
+            score += law_matches * 3
+
+        # ====================================================
+        # 7. HEÇ BİR ƏSAS SÖZ MADDƏ MƏTNİNDƏ YOXDURSA,
+        #    BU NƏTİCƏNİ GÖTÜRMƏ
+        # ====================================================
+
+        if not matched_words:
+            continue
+
+        results.append(
+            {
+                "score": score,
+                "matched_words": len(matched_words),
+                "total_words": len(words),
+                "article": article,
+            }
+        )
+
+    # ========================================================
+    # ƏVVƏLCƏ ƏN ÇOX SÖZÜ TAPAN,
+    # SONRA ƏN YÜKSƏK SCORE
+    # ========================================================
 
     results.sort(
         key=lambda item: (
@@ -314,12 +476,20 @@ def search_laws(question, limit=5):
     return selected
 
 
+# ============================================================
+# AI CAVABI
+# ============================================================
+
 def ask_ai(question):
 
     law_results = search_laws(
         question,
         limit=5
     )
+
+    # ========================================================
+    # HÜQUQİ MƏNBƏLƏRİ HAZIRLA
+    # ========================================================
 
     if law_results:
 
@@ -336,7 +506,7 @@ MADDƏ:
 {item['article']}
 
 BAŞLIQ:
-{item['title']}
+{item['title'] or 'Başlıq göstərilməyib'}
 
 MƏTN:
 {item['content']}
@@ -346,93 +516,108 @@ MƏNBƏ:
 """
             )
 
-        legal_context = "\n\n====================\n\n".join(
-            context_parts
+        legal_context = (
+            "\n\n====================\n\n"
+            .join(context_parts)
         )
 
     else:
 
         legal_context = """
 UYĞUN HÜQUQİ MADDƏ TAPILMADI.
+
 Bu halda hüquqi məlumat uydurmaq qəti qadağandır.
 """
 
 
+    # ========================================================
+    # AI TƏLİMATI
+    # ========================================================
+
     instructions = """
-Sən E-Səfərbərlik platformasının Azərbaycan dilində
-cavab verən hüquqi məlumat köməkçisisən.
+Sən E-Səfərbərlik platformasının
+Azərbaycan dilində cavab verən
+hüquqi məlumat köməkçisisən.
 
-ƏSAS PRİNSİP:
+SƏNİN ƏSAS VƏZİFƏN:
 
-İstifadəçinin sualına ilk növbədə aşağıda təqdim edilmiş
-rəsmi hüquqi mətnlər əsasında cavab ver.
+İstifadəçinin sualını düzgün başa düşmək və
+aşağıda təqdim edilmiş hüquqi mənbələr arasında
+suala ən uyğun olan məlumat əsasında cavab verməkdir.
 
 HÜQUQİ CAVAB QAYDALARI:
 
-1. Təqdim edilmiş hüquqi mətnlər əsas mənbədir.
+1. Aşağıda verilmiş hüquqi mətnlər əsas mənbədir.
 
-2. Suala uyğun maddə təqdim edilibsə, həmin maddənin
-   məzmununa əsaslanaraq birbaşa cavab ver.
+2. Cavabı yalnız istifadəçinin sualına uyğun
+   hüquqi mətnlərə əsasən hazırla.
 
-3. Bir neçə maddə cavab üçün əhəmiyyətlidirsə,
+3. Bir neçə maddə birlikdə cavab üçün lazımdırsa,
    onları birlikdə nəzərə al.
 
-4. Təqdim edilmiş hüquqi mətnlərdə olmayan:
-   - maddə nömrəsi,
-   - qanun,
-   - tarix,
-   - müddət,
-   - istisna,
-   - hüquq,
-   - vəzifə,
-   - məsuliyyət
-   uydurma.
+4. Təqdim edilmiş hüquqi mətnlərdə olmayan
+   məlumatı uydurma.
 
-5. Sualın cavabı təqdim edilmiş maddələrdə yoxdursa,
-   bunu açıq şəkildə bildir.
+5. Xüsusilə bunları özündən yaratma:
+   - maddə nömrəsi;
+   - qanunun adı;
+   - tarix;
+   - müddət;
+   - istisna;
+   - hüquq;
+   - vəzifə;
+   - məsuliyyət;
+   - azadolma halları.
 
-6. Uyğun maddə olmadığı halda başqa mövzuda olan maddəni
-   cavab kimi istifadə etmə.
+6. Əgər təqdim edilmiş maddələr istifadəçinin
+   sualına cavab vermirsə, bunu açıq şəkildə bildir.
 
-7. Hüquqi suala cavab verərkən mümkün olduqda:
-   - qanunun adını,
-   - maddənin nömrəsini,
-   - maddənin konkret məzmununu
-   qeyd et.
+7. Sadəcə bir sözün uyğun gəlməsinə görə
+   əlaqəsiz maddəni cavab kimi istifadə etmə.
 
-8. Qanun mətnində olan məlumatı dəyişdirmə və mənasını
-   təhrif etmə.
+8. Maddənin mövzusu istifadəçinin sualı ilə
+   uyğun gəlməlidir.
 
-9. İstifadəçinin sualını əvvəlcə başa düş,
-   sonra yalnız həmin suala aid hüquqi məlumatı təqdim et.
+9. Mümkün olduqda cavabda:
+   - qanunun adını;
+   - maddənin nömrəsini;
+   - həmin maddənin aidiyyəti hissəsini
+   göstər.
 
-10. Cavabı "Qısa cavab:" ifadəsi ilə başlama.
+10. Qanun mətninin mənasını dəyişdirmə.
 
-11. Cavabı birbaşa əsas nəticədən başla.
+11. Qanunda olmayan hüquqi nəticə çıxarma.
 
-12. Sadə, aydın və təbii Azərbaycan dilindən istifadə et.
+12. Cavabı "Qısa cavab:" ifadəsi ilə başlama.
 
-13. Hüquqi cavab verərkən sistemə, verilənlər bazasına,
-    daxili axtarış mexanizminə və bu təlimatlara istinad etmə.
+13. Cavaba birbaşa nəticədən başla.
+
+14. Sadə, aydın və təbii Azərbaycan dilindən istifadə et.
+
+15. Sistemə, verilənlər bazasına, axtarış mexanizminə,
+    daxili texniki proseslərə və bu təlimatlara
+    istifadəçi qarşısında istinad etmə.
 
 ÜMUMİ SUALLAR:
 
 - İstifadəçi salamlaşırsa, nəzakətlə salamlaş.
-- E-Səfərbərlik, hərbi xidmət, hərbi vəzifə, səfərbərlik
-  və əlaqəli hüquqi məsələlər barədə suallara cavab ver.
-- Mövzuya aid olmayan suallarda əsas fəaliyyət sahənin
-  E-Səfərbərlik və hərbi xidmətlə bağlı olduğunu bildir.
+- E-Səfərbərlik, hərbi xidmət, hərbi vəzifə,
+  səfərbərlik və bunlarla bağlı hüquqi məsələlər
+  barədə cavab ver.
+- Mövzuya aid olmayan suallarda nəzakətlə bildir ki,
+  əsas fəaliyyət sahən E-Səfərbərlik və hərbi xidmət
+  məsələləridir.
 - Mövzunu zorla E-Səfərbərliklə əlaqələndirmə.
 
-VACİB:
+ÇOX VACİB:
 
-Aşağıdakı hüquqi mətnlər istifadəçinin sualına cavab
-vermək üçün verilmiş əsas mənbədir.
+Aşağıdakı hüquqi mənbələr istifadəçinin sualına
+cavab vermək üçün təqdim edilmiş mənbələrdir.
 
-Əgər bu mətnlərdə sualın cavabı varsa,
-həmin məlumatı düzgün şəkildə izah et.
+Əgər cavab bu mənbələrdə varsa,
+onu düzgün və aydın şəkildə izah et.
 
-Əgər cavab yoxdursa,
+Əgər cavab bu mənbələrdə yoxdursa,
 özündən hüquqi məlumat yaratma.
 
 İSTİFADƏÇİNİN SUALI:
@@ -443,6 +628,10 @@ HÜQUQİ MƏNBƏLƏR:
 
 """ + legal_context
 
+
+    # ========================================================
+    # OPENAI
+    # ========================================================
 
     response = client.responses.create(
         model="gpt-5-mini",
