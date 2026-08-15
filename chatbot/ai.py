@@ -52,7 +52,7 @@ client = OpenAI(
 )
 
 
-def search_laws(question, limit=10):
+def search_laws(question, limit=3):
     """
     Bütün qanun və maddələr arasında axtarış edir.
     OpenAI-a bütün qanunları göndərmir.
@@ -143,7 +143,7 @@ def search_laws(question, limit=10):
 
 def ask_ai(question):
 
-    law_results = search_laws(question, limit=10)
+    law_results = search_laws(question, limit=3)
 
     if law_results:
 
