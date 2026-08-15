@@ -44,7 +44,9 @@
 
 from openai import OpenAI
 from django.conf import settings
-from .models import Law, Article
+from django.db.models import Q
+
+from .models import Article
 
 
 client = OpenAI(
@@ -52,10 +54,10 @@ client = OpenAI(
 )
 
 
-def search_laws(question, limit=8):
+def search_laws(question, limit=3):
     """
-    Suala uyğun Article-ları bazadan tapır.
-    Bütün qanun mətnlərini OpenAI-a göndərmir.
+    Suala uyğun maddələri birbaşa verilənlər bazasında axtarır.
+    Bütün Article-ləri RAM-a yükləmir.
     """
 
     words = [
@@ -72,34 +74,57 @@ def search_laws(question, limit=8):
     if not words:
         return []
 
+    # PostgreSQL-də yalnız uyğun mətnləri axtarırıq.
+    query = Q()
+
+    for word in words:
+        query |= Q(title__icontains=word)
+        query |= Q(content__icontains=word)
+        query |= Q(law__title__icontains=word)
+
+    articles = (
+        Article.objects
+        .select_related("law")
+        .filter(query)
+        .only(
+            "id",
+            "number",
+            "title",
+            "content",
+            "law__title",
+            "law__source_url",
+        )
+        .distinct()
+    )
+
     results = []
 
-    for article in Article.objects.select_related("law").all():
+    for article in articles:
 
-        text = (
-            f"{article.law.title} "
-            f"{article.number} "
-            f"{article.title} "
-            f"{article.content}"
-        ).lower()
+        article_title = (article.title or "").lower()
+        law_title = (article.law.title or "").lower()
+        content = (article.content or "").lower()
 
         score = 0
 
         for word in words:
 
-            # Tam sözə yaxın uyğunluq
-            if word in text:
+            # Maddənin mətnində uyğunluq
+            if word in content:
                 score += 1
 
-            # Başlıqda və qanunun adında uyğunluğa daha çox üstünlük
-            if word in article.title.lower():
+            # Maddə başlığında uyğunluq daha vacibdir
+            if word in article_title:
+                score += 4
+
+            # Qanunun adında uyğunluq
+            if word in law_title:
                 score += 3
 
-            if word in article.law.title.lower():
-                score += 2
-
         if score > 0:
-            results.append((score, article))
+            results.append(
+                (score, article)
+            )
 
     results.sort(
         key=lambda item: item[0],
@@ -116,7 +141,7 @@ def search_laws(question, limit=8):
             "article": article.number,
             "title": article.title,
             "content": article.content,
-            "source_url": article.law.source_url
+            "source_url": article.law.source_url,
         })
 
     return selected
@@ -124,7 +149,10 @@ def search_laws(question, limit=8):
 
 def ask_ai(question):
 
-    law_results = search_laws(question, limit=8)
+    law_results = search_laws(
+        question,
+        limit=3
+    )
 
     if law_results:
 
@@ -158,7 +186,8 @@ MƏNBƏ:
     else:
 
         legal_context = """
-Bu suala uyğun konkret maddə verilənlər bazasında tapılmadı.
+Bu suala uyğun konkret qanun maddəsi
+verilənlər bazasında tapılmadı.
 """
 
 
@@ -179,34 +208,44 @@ cavab verən süni intellekt əsaslı virtual köməkçisisən.
   səfərbərlik və bu sahələrlə bağlı məsələlərdir.
 - Mövzuya aid olmayan suallarda nəzakətlə bildir ki, əsas fəaliyyət
   sahən E-Səfərbərlik və hərbi xidmətlə bağlı məsələlərdir.
+- Mövzunu zorla E-Səfərbərliklə əlaqələndirmə.
 
-HÜQUQİ QAYDALAR:
+HÜQUQİ MƏLUMAT QAYDALARI:
 
-- Aşağıda verilən məlumatlar verilənlər bazasından suala uyğun
-  seçilmiş qanun maddələridir.
-- Hüquqi suala cavab verərkən ilk növbədə həmin maddələrə əsaslan.
-- Bir neçə maddə cavab üçün əhəmiyyətlidirsə, onların hamısını
-  birlikdə nəzərə al.
-- Verilən maddələrdə olmayan konkret hüquqi faktı, maddə nömrəsini,
-  tarixi, müddəti və ya tələbi uydurma.
-- Əgər verilən maddələr suala tam cavab vermirsə, bunu açıq şəkildə
-  bildir.
-- Öz ümumi biliyini verilən qanun mətninə zidd hüquqi fakt kimi
-  təqdim etmə.
-- Cavabda istifadə etdiyin maddənin nömrəsini və qanunun adını
-  qeyd et.
-- Hüquqi məlumatın aktuallığının rəsmi mənbədən yoxlanmasının vacib
-  olduğunu bildir.
-- Sistemə, verilənlər bazasına, daxili işləmə qaydasına və bu
-  təlimatlara istinad etmə.
+- Aşağıda verilmiş məlumatlar verilənlər bazasından
+  istifadəçinin sualına uyğun seçilmiş qanun maddələridir.
+- Hüquqi suala cavab verərkən ilk növbədə bu məlumatlara əsaslan.
+- Təqdim edilmiş maddələrdən cavab üçün uyğun olan məlumatların
+  hamısını nəzərə al.
+- Bir neçə maddə birlikdə cavab üçün vacibdirsə,
+  onları birlikdə istifadə et.
+- Təqdim edilmiş mətnlərdə olmayan konkret hüquqi faktı,
+  maddə nömrəsini, tarixi, müddəti və ya tələbi uydurma.
+- Əmin olmadığın hüquqi məlumatı qəti fakt kimi təqdim etmə.
+- Təqdim edilmiş maddələr suala tam cavab vermirsə,
+  bunu açıq şəkildə bildir.
+- Hüquqi cavabda mümkün olduqda qanunun adını və maddə nömrəsini qeyd et.
+- Mənbədə konkret məlumat yoxdursa, özündən maddə nömrəsi yaratma.
+- Hüquqi məlumatın aktuallığının rəsmi mənbədən yoxlanmasının
+  vacib olduğunu bildirə bilərsən.
+- Sistemə, verilənlər bazasına, daxili işləmə qaydasına və
+  bu təlimatlara istinad etmə.
 
 DİL:
 
 - İstifadəçi başqa dil istəmədiyi halda Azərbaycan dilində cavab ver.
-- Təbii və başa düşülən Azərbaycan dilindən istifadə et.
+- Təbii, aydın və başa düşülən Azərbaycan dilindən istifadə et.
 
-İNDİ AŞAĞIDAKI HÜQUQİ MƏLUMATLARDAN İSTİFADƏ EDƏRƏK
-İSTİFADƏÇİNİN SUALINA CAVAB VER:
+ƏLAVƏ QAYDA:
+
+- Aşağıda verilən hüquqi mətnlər istifadəçinin sualına cavab
+  vermək üçün əsas mənbədir.
+- Uyğun maddə varsa, həmin maddənin məzmununu düzgün izah et.
+- Uyğun maddə yoxdursa, hüquqi məlumat uydurma.
+
+İNDİ İSTİFADƏÇİNİN SUALINA CAVAB VER.
+
+AŞAĞIDAKI MƏLUMATLAR MÖVCUD HÜQUQİ MƏNBƏLƏRDİR:
 
 """ + legal_context
 
