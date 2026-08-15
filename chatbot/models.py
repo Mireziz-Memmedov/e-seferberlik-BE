@@ -24,3 +24,15 @@ class Message(models.Model):
 
     class Meta:
         db_table = 'Message'
+
+
+class Law(models.Model):
+    title = models.CharField(max_length=500)
+    content = models.TextField()
+    source_url = models.URLField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'Law'
+
+    def __str__(self):
+        return self.title
