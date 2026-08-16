@@ -1,244 +1,63 @@
-# from chatbot.models import Article
-
-
-# STOP_WORDS = {
-#     "mən",
-#     "sən",
-#     "siz",
-#     "biz",
-#     "bu",
-#     "bir",
-#     "və",
-#     "ilə",
-#     "üçün",
-#     "olan",
-#     "olaraq",
-#     "haqqında",
-#     "necə",
-#     "nədir",
-#     "kimdir",
-#     "kimlər",
-#     "edə",
-#     "edilir",
-#     "edən",
-#     "mənim",
-#     "sənin",
-#     "var",
-#     "mi",
-#     "mı",
-#     "mu",
-#     "mü",
-# }
-
-
-# def normalize_text(text):
-#     """
-#     Azərbaycan dilində mətnin müqayisəsini
-#     sadələşdirir.
-#     """
-
-#     text = text.lower().strip()
-
-#     replacements = {
-#         "ə": "e",
-#         "ı": "i",
-#         "ö": "o",
-#         "ü": "u",
-#         "ğ": "g",
-#         "ş": "s",
-#         "ç": "c",
-#     }
-
-#     for old, new in replacements.items():
-#         text = text.replace(old, new)
-
-#     return text
-
-
-# def get_keywords(question):
-#     """
-#     Sualdan əsas açar sözləri çıxarır.
-#     """
-
-#     normalized = normalize_text(question)
-
-#     words = normalized.split()
-
-#     keywords = []
-
-#     for word in words:
-
-#         word = word.strip(
-#             ".,!?;:()[]{}\"'"
-#         )
-
-#         if not word:
-#             continue
-
-#         if len(word) < 3:
-#             continue
-
-#         if word in STOP_WORDS:
-#             continue
-
-#         keywords.append(word)
-
-#     return keywords
-
-
-# def search_articles(question, limit=5):
-#     """
-#     Suala uyğun qanun maddələrini tapır.
-
-#     Nəticələr score-a görə sıralanır.
-#     Eyni Article yalnız bir dəfə qaytarılır.
-#     """
-
-#     keywords = get_keywords(question)
-
-#     if not keywords:
-#         return []
-
-#     articles = (
-#         Article.objects
-#         .select_related("law")
-#         .all()
-#     )
-
-#     scored_articles = []
-
-#     for article in articles:
-
-#         title = normalize_text(
-#             article.title or ""
-#         )
-
-#         content = normalize_text(
-#             article.content or ""
-#         )
-
-#         full_text = f"{title} {content}"
-
-#         score = 0
-
-#         for keyword in keywords:
-
-#             # Başlıqda söz varsa daha yüksək bal
-#             if keyword in title:
-#                 score += 5
-
-#             # Məzmun daxilində söz varsa
-#             if keyword in content:
-#                 score += 1
-
-#         if score > 0:
-#             scored_articles.append(
-#                 {
-#                     "article": article,
-#                     "score": score,
-#                 }
-#             )
-
-#     # Ən uyğun maddələr əvvəl
-#     scored_articles.sort(
-#         key=lambda item: item["score"],
-#         reverse=True
-#     )
-
-#     # Duplicate Article-ləri çıxar
-#     unique_articles = []
-
-#     seen_ids = set()
-
-#     for item in scored_articles:
-
-#         article = item["article"]
-
-#         if article.id in seen_ids:
-#             continue
-
-#         seen_ids.add(article.id)
-
-#         unique_articles.append(
-#             article
-#         )
-
-#         if len(unique_articles) >= limit:
-#             break
-
-#     return unique_articles
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 import re
+
+from openai import OpenAI
+from django.conf import settings
+from pgvector.django import CosineDistance
 
 from chatbot.models import Article
 
 
+client = OpenAI(
+    api_key=settings.OPENAI_API_KEY
+)
+
+
+# -----------------------------------------
+# STOP WORDS
+# -----------------------------------------
+
 STOP_WORDS = {
-    "mən",
-    "sən",
+    "men",
+    "sen",
     "siz",
     "biz",
     "bu",
     "bir",
-    "və",
-    "ilə",
-    "üçün",
+    "ve",
+    "ile",
+    "ucun",
     "olan",
     "olaraq",
-    "haqqında",
-    "necə",
-    "nədir",
+    "haqqinda",
+    "nece",
+    "nedir",
     "kimdir",
-    "kimlər",
-    "edə",
+    "kimler",
+    "hansi",
+    "hansilar",
+    "eden",
     "edilir",
-    "edən",
-    "mənim",
-    "sənin",
+    "edilmesi",
     "var",
     "mi",
     "mı",
     "mu",
     "mü",
-    "hansı",
-    "hansılar",
 }
 
+
+# -----------------------------------------
+# NORMALIZE
+# -----------------------------------------
 
 def normalize_text(text):
     """
     Azərbaycan dilində mətnin müqayisəsini
     sadələşdirir.
     """
+
+    if not text:
+        return ""
 
     text = text.lower().strip()
 
@@ -258,9 +77,13 @@ def normalize_text(text):
     return text
 
 
+# -----------------------------------------
+# KEYWORDS
+# -----------------------------------------
+
 def get_keywords(question):
     """
-    Sualdan əsas açar sözləri çıxarır.
+    Sualdan əsas sözləri çıxarır.
     """
 
     normalized = normalize_text(question)
@@ -286,32 +109,250 @@ def get_keywords(question):
     return keywords
 
 
-def search_articles(question, limit=5):
-    """
-    Suala ən uyğun qanun maddələrini tapır.
+# -----------------------------------------
+# INTENT KEYWORDS
+# -----------------------------------------
 
-    Axtarış zamanı:
-    - başlıq uyğunluğuna daha çox bal verilir;
-    - məzmun uyğunluğu nəzərə alınır;
-    - bütün açar sözlərin birlikdə uyğunluğu əlavə bal verir;
-    - tam ifadə uyğunluğu daha yüksək qiymətləndirilir;
-    - nəticələr score-a görə sıralanır.
+INTENTS = {
+
+    "azadetme": {
+        "azad",
+        "azaddır",
+        "azaddir",
+        "azadlar",
+        "azadetme",
+        "azad edil",
+        "azad olunur",
+        "azad edilir",
+        "azad olan",
+        "kimler azaddır",
+    },
+
+    "toplanis": {
+        "toplanis",
+        "toplanislara",
+        "toplanisa",
+        "telim",
+        "telime",
+        "telimler",
+        "cagir",
+        "cagirilan",
+        "cagirilir",
+    },
+
+    "ehtiyat": {
+        "ehtiyat",
+        "ehtiyatda",
+        "ehtiyatdaki",
+        "ehtiyatda olan",
+    },
+
+    "muddet": {
+        "muddet",
+        "nece",
+        "ne qeder",
+        "ne qederlik",
+        "ayadek",
+        "defeyedek",
+    },
+}
+
+
+def detect_intents(question):
     """
+    Sualın əsas hüquqi mövzusunu müəyyən edir.
+    """
+
+    normalized = normalize_text(question)
+
+    detected = set()
+
+    for intent, phrases in INTENTS.items():
+
+        for phrase in phrases:
+
+            normalized_phrase = normalize_text(
+                phrase
+            )
+
+            if normalized_phrase in normalized:
+                detected.add(intent)
+                break
+
+    return detected
+
+
+# -----------------------------------------
+# INTENT SCORE
+# -----------------------------------------
+
+def calculate_intent_score(
+    article,
+    intents
+):
+    """
+    Maddənin başlığının və məzmununun
+    sualın hüquqi mövzusu ilə uyğunluğunu
+    əlavə balla qiymətləndirir.
+    """
+
+    if not intents:
+        return 0
+
+    title = normalize_text(
+        article.title or ""
+    )
+
+    content = normalize_text(
+        article.content or ""
+    )
+
+    full_text = f"{title} {content}"
+
+    score = 0
+
+    # -------------------------------------
+    # AZADOLMA
+    # -------------------------------------
+
+    if "azadetme" in intents:
+
+        if "azadetme" in title:
+            score += 50
+
+        if "azad" in title:
+            score += 30
+
+        if "azad" in content:
+            score += 15
+
+        # "Toplanışlardan azadetmə" kimi başlıqlar
+        if (
+            "toplanis" in title
+            and "azad" in title
+        ):
+            score += 40
+
+    # -------------------------------------
+    # TOPLANIŞ / TƏLİM
+    # -------------------------------------
+
+    if "toplanis" in intents:
+
+        if "toplanis" in title:
+            score += 25
+
+        if "telim" in title:
+            score += 20
+
+        if "cagiril" in content:
+            score += 10
+
+    # -------------------------------------
+    # EHTİYAT
+    # -------------------------------------
+
+    if "ehtiyat" in intents:
+
+        if "ehtiyat" in title:
+            score += 25
+
+        if "ehtiyat" in content:
+            score += 8
+
+    # -------------------------------------
+    # MÜDDƏT
+    # -------------------------------------
+
+    if "muddet" in intents:
+
+        if "muddet" in title:
+            score += 15
+
+        if "muddet" in content:
+            score += 5
+
+    return score
+
+
+# -----------------------------------------
+# SEARCH
+# -----------------------------------------
+
+def search_articles(
+    question,
+    limit=5
+):
+    """
+    Suala uyğun qanun maddələrini tapır.
+
+    Axtarış:
+    1. Embedding / semantic similarity
+    2. Başlıq uyğunluğu
+    3. Məzmun uyğunluğu
+    4. Açar sözlərin uyğunluğu
+    5. Sualın hüquqi intenti
+
+    Daha uyğun hüquqi maddələr yuxarı çıxır.
+    """
+
+    if not question:
+        return []
+
+    question = question.strip()
+
+    if not question:
+        return []
+
+    # -----------------------------------------
+    # KEYWORDS
+    # -----------------------------------------
 
     keywords = get_keywords(question)
 
-    if not keywords:
-        return []
+    # -----------------------------------------
+    # INTENTS
+    # -----------------------------------------
+
+    intents = detect_intents(question)
+
+    # -----------------------------------------
+    # QUESTION EMBEDDING
+    # -----------------------------------------
+
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=question
+    )
+
+    question_embedding = response.data[0].embedding
+
+    # -----------------------------------------
+    # DATABASE
+    # -----------------------------------------
 
     articles = (
         Article.objects
         .select_related("law")
-        .all()
+        .exclude(embedding=None)
+        .annotate(
+            distance=CosineDistance(
+                "embedding",
+                question_embedding
+            )
+        )
+        .order_by("distance")
     )
 
     scored_articles = []
 
-    normalized_question = normalize_text(question)
+    normalized_question = normalize_text(
+        question
+    )
+
+    # -----------------------------------------
+    # SCORE
+    # -----------------------------------------
 
     for article in articles:
 
@@ -325,93 +366,155 @@ def search_articles(question, limit=5):
 
         full_text = f"{title} {content}"
 
-        score = 0
+        # Semantic similarity
+        semantic_score = max(
+            0,
+            1 - float(article.distance)
+        )
+
+        score = semantic_score * 30
+
         matched_keywords = 0
 
-        # --------------------------------
-        # 1. Açar sözlərin uyğunluğu
-        # --------------------------------
+        # -------------------------------------
+        # KEYWORD MATCHING
+        # -------------------------------------
 
         for keyword in keywords:
 
             if keyword in title:
-                score += 10
+                score += 12
                 matched_keywords += 1
 
             elif keyword in content:
-                score += 2
+                score += 3
                 matched_keywords += 1
 
-        # --------------------------------
-        # 2. Bütün açar sözlər birlikdədirsə
-        # --------------------------------
+        # -------------------------------------
+        # ALL KEYWORDS
+        # -------------------------------------
 
-        if all(
-            keyword in full_text
-            for keyword in keywords
-        ):
-            score += 8
+        if keywords:
 
-        # --------------------------------
-        # 3. Sualdakı ifadə başlıqda varsa
-        # --------------------------------
+            all_keywords_match = all(
+                keyword in full_text
+                for keyword in keywords
+            )
+
+            if all_keywords_match:
+                score += 15
+
+        # -------------------------------------
+        # EXACT QUESTION
+        # -------------------------------------
 
         if normalized_question in title:
-            score += 20
-
-        # --------------------------------
-        # 4. Sualdakı ifadə məzmunda varsa
-        # --------------------------------
+            score += 30
 
         if normalized_question in content:
-            score += 10
+            score += 20
 
-        # --------------------------------
-        # 5. Heç bir real uyğunluq yoxdursa
-        # --------------------------------
+        # -------------------------------------
+        # INTENT SCORE
+        # -------------------------------------
 
-        if matched_keywords == 0:
-            continue
+        intent_score = calculate_intent_score(
+            article,
+            intents
+        )
 
-        # --------------------------------
-        # 6. Çoxlu uyğunluq üstünlük qazansın
-        # --------------------------------
+        score += intent_score
 
-        if len(keywords) > 1:
+        # -------------------------------------
+        # COVERAGE
+        # -------------------------------------
+
+        if keywords:
 
             coverage = (
-                matched_keywords / len(keywords)
+                matched_keywords
+                / len(keywords)
             )
 
-            score += int(
-                coverage * 10
-            )
+            score += coverage * 10
+
+        # -------------------------------------
+        # RESULT
+        # -------------------------------------
 
         scored_articles.append(
             {
                 "article": article,
                 "score": score,
+                "semantic_score": semantic_score,
                 "matched_keywords": matched_keywords,
+                "intent_score": intent_score,
             }
         )
 
-    # --------------------------------
-    # Ən uyğun maddələr əvvəl
-    # --------------------------------
+    # -----------------------------------------
+    # SORT
+    # -----------------------------------------
 
     scored_articles.sort(
         key=lambda item: (
             item["score"],
             item["matched_keywords"],
+            item["semantic_score"],
         ),
         reverse=True,
     )
 
-    # --------------------------------
-    # Duplicate Article-ləri çıxar
-    # --------------------------------
+    # -----------------------------------------
+    # DEBUG
+    # -----------------------------------------
 
-    unique_articles = []
+    print(
+        "\n================ SEARCH DEBUG ================"
+    )
+
+    print(
+        f"QUESTION: {question}"
+    )
+
+    print(
+        f"KEYWORDS: {keywords}"
+    )
+
+    print(
+        f"INTENTS: {intents}"
+    )
+
+    print(
+        "\nTOP RESULTS:"
+    )
+
+    for index, item in enumerate(
+        scored_articles[:10],
+        start=1
+    ):
+
+        article = item["article"]
+
+        print(
+            f"{index}. "
+            f"Maddə {article.number} | "
+            f"Score={item['score']:.2f} | "
+            f"Semantic={item['semantic_score']:.4f} | "
+            f"Keywords={item['matched_keywords']} | "
+            f"Intent={item['intent_score']} | "
+            f"{article.title}"
+        )
+
+    print(
+        "==============================================\n"
+    )
+
+    # -----------------------------------------
+    # RETURN UNIQUE ARTICLES
+    # -----------------------------------------
+
+    results = []
 
     seen_ids = set()
 
@@ -424,9 +527,10 @@ def search_articles(question, limit=5):
 
         seen_ids.add(article.id)
 
-        unique_articles.append(article)
+        results.append(article)
 
-        if len(unique_articles) >= limit:
+        if len(results) >= limit:
             break
 
-    return unique_articles
+    return results
+
