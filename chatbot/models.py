@@ -1,15 +1,10 @@
 from django.db import models
-from django.contrib.auth.models import AbstractUser
 from pgvector.django import VectorField
-
-
-class NewsUsers(AbstractUser):
-    pass
-
+from django.conf import settings
 
 class Conversation(models.Model):
     user = models.ForeignKey(
-        NewsUsers,
+        settings.AUTH_USER_MODEL,
         null=True,
         blank=True,
         on_delete=models.SET_NULL,

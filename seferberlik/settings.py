@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "corsheaders",
     'cloudinary',
     'cloudinary_storage',
+    "users"
     # 'rest_framework_simplejwt.token_blacklist',
 ]
 
@@ -176,4 +177,4 @@ cloudinary.config(
     secure=True
 )
 
-AUTH_USER_MODEL = 'chatbot.NewsUsers'
+AUTH_USER_MODEL = 'users.User'

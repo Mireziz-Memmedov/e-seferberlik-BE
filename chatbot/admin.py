@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Law, Article, Conversation, Message, NewsUsers
+from .models import Law, Article, Conversation, Message
 
 
 @admin.register(Law)
@@ -26,9 +26,3 @@ class MessageAdmin(admin.ModelAdmin):
     list_display = ("id", "conversation", "is_from_user", "created_at")
     search_fields = ("text",)
     list_filter = ("is_from_user",)
-
-
-@admin.register(NewsUsers)
-class NewsUsersAdmin(admin.ModelAdmin):
-    list_display = ("id", "username", "email", "is_staff", "is_active")
-    search_fields = ("username", "email")
