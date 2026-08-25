@@ -11,14 +11,46 @@ client = OpenAI(
 
 def ask_ai(question):
 
+    # =========================================
+    # SALAMLAMA
+    # =========================================
+
+    normalized_question = question.strip().lower()
+
+    greetings = {
+        "salam",
+        "salam!",
+        "salam.",
+        "salam?",
+        "salamlar",
+        "salamlar!",
+    }
+
+    if normalized_question in greetings:
+        return (
+            "Salam! Sizə E-Səfərbərlik, hərbi vəzifə, "
+            "hərbi xidmət və səfərbərlik məsələləri ilə "
+            "bağlı kömək edə bilərəm."
+        )
+
+    # =========================================
+    # SEARCH
+    # =========================================
+
     articles = search_articles(
         question,
-        limit=5
+        limit=3
     )
 
     context_parts = []
 
     for article in articles:
+
+        content = article.content or ""
+
+        # Çox uzun maddələrin konteksti
+        # şişirtməsinin qarşısını alır
+        content = content[:6000]
 
         context_parts.append(
             f"""
@@ -32,7 +64,7 @@ BAŞLIQ:
 {article.title}
 
 MƏTN:
-{article.content}
+{content}
 """
         )
 
@@ -43,6 +75,10 @@ MƏTN:
             "Bu sualla əlaqəli qanun maddəsi "
             "tapılmadı."
         )
+
+    # =========================================
+    # OPENAI
+    # =========================================
 
     response = client.responses.create(
 
