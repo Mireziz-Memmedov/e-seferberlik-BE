@@ -341,7 +341,7 @@ def search_articles(
                 question_embedding
             )
         )
-        .order_by("distance")
+        .order_by("distance")[:20]
     )
 
     scored_articles = []
