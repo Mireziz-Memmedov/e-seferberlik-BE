@@ -2002,7 +2002,11 @@ from collections import defaultdict
 
 from openai import OpenAI
 from django.conf import settings
-from django.db.models import Q
+from django.contrib.postgres.search import (
+    SearchQuery,
+    SearchRank,
+    SearchVector,
+)
 from pgvector.django import CosineDistance
 
 from chatbot.models import Article
@@ -2018,42 +2022,59 @@ client = OpenAI(
 
 
 # =========================================================
-# SETTINGS
+# SEARCH SETTINGS
 # =========================================================
 
-SEMANTIC_LIMIT = 15
-KEYWORD_LIMIT = 15
-EXACT_LIMIT = 5
+SEMANTIC_LIMIT = 20
+LEXICAL_LIMIT = 20
+EXACT_LIMIT = 10
 
 FINAL_LIMIT = 5
 
-MIN_SEMANTIC_SCORE = 0.18
+MAX_QUERY_TERMS = 30
+MAX_PHRASES = 10
 
-# Semantic score 0-1 -> points
-SEMANTIC_WEIGHT = 100
 
-TITLE_MATCH_SCORE = 32
-CONTENT_MATCH_SCORE = 6
-
-PHRASE_TITLE_SCORE = 45
-PHRASE_CONTENT_SCORE = 15
-
-CONCEPT_TITLE_SCORE = 28
-CONCEPT_CONTENT_SCORE = 9
-
-NUMBER_TITLE_SCORE = 25
-NUMBER_CONTENT_SCORE = 12
-
-EXACT_SOURCE_SCORE = 120
-SEMANTIC_SOURCE_SCORE = 18
-KEYWORD_SOURCE_SCORE = 18
-
-MULTI_SOURCE_BONUS = 35
+# =========================================================
+# SEMANTIC THRESHOLDS
+# =========================================================
 
 STRONG_SEMANTIC = 0.48
 MEDIUM_SEMANTIC = 0.32
+MIN_SEMANTIC_SCORE = 0.20
 
-MAX_QUERY_TERMS = 40
+
+# =========================================================
+# SCORE WEIGHTS
+# =========================================================
+
+SEMANTIC_WEIGHT = 100
+LEXICAL_WEIGHT = 35
+
+TITLE_KEYWORD_SCORE = 14
+CONTENT_KEYWORD_SCORE = 4
+
+PHRASE_TITLE_SCORE = 28
+PHRASE_CONTENT_SCORE = 10
+
+CONCEPT_TITLE_SCORE = 18
+CONCEPT_CONTENT_SCORE = 6
+
+NUMBER_TITLE_SCORE = 35
+NUMBER_CONTENT_SCORE = 14
+
+EXACT_SOURCE_SCORE = 300
+SEMANTIC_SOURCE_SCORE = 10
+LEXICAL_SOURCE_SCORE = 10
+
+MULTI_SOURCE_BONUS = 22
+THREE_SOURCE_BONUS = 15
+
+FULL_INTENT_BONUS = 35
+PARTIAL_INTENT_BONUS = 12
+
+STRONG_LEXICAL_BONUS = 18
+MEDIUM_LEXICAL_BONUS = 8
 
 
 # =========================================================
@@ -2061,122 +2082,103 @@ MAX_QUERY_TERMS = 40
 # =========================================================
 
 STOP_WORDS = {
-    "men", "mən",
-    "sen", "sən",
+    "men",
+    "mən",
+    "sen",
+    "sən",
     "siz",
     "biz",
+
     "bu",
     "bir",
-    "ve", "və",
-    "ile", "ilə",
-    "ucun", "üçün",
+
+    "ve",
+    "və",
+    "ile",
+    "ilə",
+    "ucun",
+    "üçün",
+
     "olan",
     "olaraq",
-    "haqqinda", "haqqında",
-    "nece", "necə",
-    "nedir", "nədir",
+
+    "haqqinda",
+    "haqqında",
+
+    "nece",
+    "necə",
+    "nedir",
+    "nədir",
+
     "kimdir",
-    "kimler", "kimlər",
-    "hansi", "hansı",
-    "hansilar", "hansılar",
-    "eden", "edən",
+    "kimler",
+    "kimlər",
+
+    "hansi",
+    "hansı",
+    "hansilar",
+    "hansılar",
+
+    "eden",
+    "edən",
     "edilir",
-    "edilmesi", "edilməsi",
-    "verilen", "verilən",
+
+    "edilmesi",
+    "edilməsi",
+
+    "verilen",
+    "verilən",
     "verilir",
     "verilirmi",
+
     "var",
-    "mi", "mı", "mu", "mü",
-    "de", "də", "da",
+
+    "mi",
+    "mı",
+    "mu",
+    "mü",
+
+    "de",
+    "də",
+    "da",
+
     "ki",
-    "gore", "görə",
-    "menim", "mənim",
-    "senin", "sənin",
+
+    "gore",
+    "görə",
+
+    "menim",
+    "mənim",
+    "senin",
+    "sənin",
     "sizin",
     "bizim",
-    "oldugum", "olduğum",
-    "oldugun", "olduğun",
-    "oldugu", "olduğu",
+
+    "oldugum",
+    "olduğum",
+    "oldugun",
+    "olduğun",
+    "oldugu",
+    "olduğu",
     "olduqda",
+
     "halda",
-    "halinda", "halında",
+    "halinda",
+    "halında",
+
     "olar",
     "olur",
-    "edə",
+
     "ede",
+    "edə",
+
     "etmek",
     "etmək",
+
     "olanlar",
     "olanlari",
     "olanları",
 }
-
-
-# =========================================================
-# NORMALIZE
-# =========================================================
-
-def normalize_text(text):
-    if not text:
-        return ""
-
-    text = str(text).lower().strip()
-
-    replacements = {
-        "ə": "e",
-        "ı": "i",
-        "ö": "o",
-        "ü": "u",
-        "ğ": "g",
-        "ş": "s",
-        "ç": "c",
-    }
-
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-
-    text = re.sub(r"[“”«»\"']", " ", text)
-    text = re.sub(r"[\(\)\[\]\{\}:;,!?]", " ", text)
-    text = re.sub(r"\s+", " ", text)
-
-    return text.strip()
-
-
-# =========================================================
-# TOKENIZE
-# =========================================================
-
-def tokenize(text):
-    normalized = normalize_text(text)
-
-    return re.findall(
-        r"[a-z0-9.-]+",
-        normalized
-    )
-
-
-# =========================================================
-# KEYWORDS
-# =========================================================
-
-def get_keywords(question):
-
-    words = tokenize(question)
-
-    keywords = []
-
-    for word in words:
-
-        if len(word) < 3:
-            continue
-
-        if word in STOP_WORDS:
-            continue
-
-        if word not in keywords:
-            keywords.append(word)
-
-    return keywords
 
 
 # =========================================================
@@ -2193,6 +2195,7 @@ RELATED_WORDS = {
         "toplanislardan",
         "toplanislara",
         "toplanislarin",
+
         "telim",
         "telime",
         "telimden",
@@ -2208,6 +2211,7 @@ RELATED_WORDS = {
         "cagirisdan",
         "cagirislar",
         "cagirislarin",
+
         "cagir",
         "cagirilir",
         "cagirilirler",
@@ -2225,13 +2229,13 @@ RELATED_WORDS = {
         "azadliq",
         "azadlar",
         "azadetme",
+
         "azad edilen",
         "azad edilir",
         "azad olunur",
         "azad edilmis",
         "azad edilmesi",
-        "azad edilmesi",
-        "azad edilmə",
+        "azad edilme",
         "azad olunma",
     },
 
@@ -2242,9 +2246,10 @@ RELATED_WORDS = {
         "mohletler",
         "mohletlerden",
         "mohletden",
+
         "mohlet verilmesi",
         "mohlet verilir",
-        "mohlet verilmə",
+        "mohlet verilme",
         "mohlet alma",
     },
 
@@ -2254,9 +2259,11 @@ RELATED_WORDS = {
         "saglamligina",
         "saglamligindan",
         "saglamliqdan",
+
         "saglamliq veziyyeti",
         "saglamliq veziyyetine",
         "saglamliq veziyyetinden",
+
         "tibbi",
         "xestelik",
         "xeste",
@@ -2270,6 +2277,7 @@ RELATED_WORDS = {
         "ailenin",
         "aileye",
         "ailevi",
+
         "aile veziyyeti",
         "aile veziyyetine",
         "aile veziyyetinden",
@@ -2278,6 +2286,7 @@ RELATED_WORDS = {
         "usag",
         "usagi",
         "usagim",
+
         "usaqlar",
         "usaglar",
         "usaqlari",
@@ -2302,11 +2311,14 @@ RELATED_WORDS = {
         "tehsili",
         "tehsile",
         "tehsilde",
+
         "tehsil alan",
         "tehsil etmek",
         "tehsil alanlar",
+
         "telebe",
         "telebeler",
+
         "universitet",
         "ali mekteb",
         "mekteb",
@@ -2317,8 +2329,10 @@ RELATED_WORDS = {
         "ehtiyatda",
         "ehtiyatdaki",
         "ehtiyatdakilar",
+
         "ehtiyatda olan",
         "ehtiyatda olanlar",
+
         "ehtiyatci",
         "ehtiyatcilar",
     },
@@ -2331,92 +2345,299 @@ RELATED_WORDS = {
 
 INTENTS = {
     "toplanis": RELATED_WORDS["toplanis"],
+    "cagiris": RELATED_WORDS["cagiris"],
     "azadetme": RELATED_WORDS["azadetme"],
     "mohlet": RELATED_WORDS["mohlet"],
     "saglamliq": RELATED_WORDS["saglamliq"],
     "aile": RELATED_WORDS["aile"],
     "tehsil": RELATED_WORDS["tehsil"],
-    "cagiris": RELATED_WORDS["cagiris"],
     "ehtiyat": RELATED_WORDS["ehtiyat"],
 }
 
 
 # =========================================================
-# EXACT ARTICLE DETECTION
+# PRIMARY INTENT TERMS
 # =========================================================
 
-def extract_article_numbers(question):
+INTENT_PRIMARY_TERMS = {
+    "toplanis": [
+        "toplanis",
+        "telim",
+    ],
 
-    normalized = normalize_text(question)
+    "cagiris": [
+        "cagiris",
+    ],
 
-    patterns = [
-        r"\b(\d+\.\d+(?:\.\d+)*)\b",
-        r"\b(\d+)-ci\s+madd",
-        r"\b(\d+)-cu\s+madd",
-        r"\b(\d+)-cu\s+madd",
-        r"\b(\d+)-cü\s+madd",
-        r"\b(\d+)-cı\s+madd",
-        r"\b(\d+)\s+madd",
-        r"\bmadd[əe]\s+(\d+(?:\.\d+)*)\b",
+    "azadetme": [
+        "azad",
+    ],
+
+    "mohlet": [
+        "mohlet",
+    ],
+
+    "saglamliq": [
+        "saglamliq",
+        "tibbi",
+    ],
+
+    "aile": [
+        "aile",
+        "usaq",
+        "ovlad",
+    ],
+
+    "tehsil": [
+        "tehsil",
+        "telebe",
+    ],
+
+    "ehtiyat": [
+        "ehtiyat",
+    ],
+}
+
+
+# =========================================================
+# QUESTION TYPE PRIORITY
+# =========================================================
+
+QUESTION_TYPE_COMBINATIONS = [
+    (
+        {"toplanis", "ehtiyat", "aile"},
+        "toplanis_ehtiyat_aile",
+    ),
+    (
+        {"toplanis", "ehtiyat"},
+        "toplanis_ehtiyat",
+    ),
+    (
+        {"toplanis", "azadetme"},
+        "toplanis_azadetme",
+    ),
+    (
+        {"cagiris", "mohlet"},
+        "cagiris_mohlet",
+    ),
+    (
+        {"aile", "mohlet"},
+        "aile_mohlet",
+    ),
+    (
+        {"saglamliq", "mohlet"},
+        "saglamliq_mohlet",
+    ),
+    (
+        {"tehsil", "mohlet"},
+        "tehsil_mohlet",
+    ),
+    (
+        {"aile", "toplanis"},
+        "toplanis_aile",
+    ),
+]
+
+
+QUESTION_TYPE_PRIORITY = [
+    "azadetme",
+    "mohlet",
+    "toplanis",
+    "cagiris",
+    "ehtiyat",
+    "aile",
+    "tehsil",
+    "saglamliq",
+]
+
+
+# =========================================================
+# NORMALIZATION
+# =========================================================
+
+def normalize_text(text):
+    """
+    Azərbaycan dilində xüsusi simvolları
+    search üçün sadələşdirir.
+    """
+
+    if not text:
+        return ""
+
+    text = str(text).lower().strip()
+
+    replacements = {
+        "ə": "e",
+        "ı": "i",
+        "ö": "o",
+        "ü": "u",
+        "ğ": "g",
+        "ş": "s",
+        "ç": "c",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    text = re.sub(
+        r"[“”«»\"']",
+        " ",
+        text,
+    )
+
+    text = re.sub(
+        r"[\(\)\[\]\{\}:;,!?]",
+        " ",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+
+# =========================================================
+# TOKENIZATION
+# =========================================================
+
+def tokenize(text):
+    normalized = normalize_text(text)
+
+    return re.findall(
+        r"[a-z0-9.-]+",
+        normalized,
+    )
+
+
+# =========================================================
+# WORD NORMALIZATION
+# =========================================================
+
+def normalize_word_for_intent(word):
+    """
+    Sadə Azərbaycan dilində şəkilçi tolerantlığı.
+    Məs:
+        usaglar -> usag
+        aileye -> aile
+        mohletden -> mohlet
+    """
+
+    word = normalize_text(word)
+
+    if not word:
+        return ""
+
+    suffixes = [
+        "larin",
+        "lerin",
+
+        "lardan",
+        "lerden",
+
+        "lara",
+        "lere",
+
+        "lar",
+        "ler",
+
+        "dan",
+        "den",
+
+        "nin",
+        "nın",
+        "nun",
+        "nün",
+
+        "na",
+        "ne",
+
+        "da",
+        "de",
+
+        "ta",
+        "te",
+
+        "ya",
+        "ye",
+
+        "ni",
+        "nı",
+        "nu",
+        "nü",
+
+        "in",
+        "ın",
+        "un",
+        "ün",
+
+        "im",
+        "ım",
+        "um",
+        "üm",
+
+        "i",
+        "ı",
+        "u",
+        "ü",
+
+        "a",
+        "e",
     ]
 
-    found = []
+    for suffix in sorted(
+        suffixes,
+        key=len,
+        reverse=True,
+    ):
+        if (
+            word.endswith(suffix)
+            and len(word) - len(suffix) >= 4
+        ):
+            word = word[:-len(suffix)]
+            break
 
-    for pattern in patterns:
-
-        matches = re.findall(
-            pattern,
-            normalized
-        )
-
-        for match in matches:
-
-            if isinstance(match, tuple):
-                match = match[0]
-
-            if match not in found:
-                found.append(match)
-
-    return found
-
-
-def exact_article_search(question):
-
-    numbers = extract_article_numbers(question)
-
-    if not numbers:
-        return []
-
-    results = []
-
-    queryset = base_article_queryset()
-
-    for number in numbers:
-
-        articles = (
-            queryset
-            .filter(number__iexact=number)
-            [:EXACT_LIMIT]
-        )
-
-        for article in articles:
-
-            results.append({
-                "article": article,
-                "semantic_score": 1.0,
-                "sources": {"exact"},
-            })
-
-    return results
+    return word
 
 
 # =========================================================
-# QUERY UNDERSTANDING
+# KEYWORDS
+# =========================================================
+
+def get_keywords(question):
+
+    keywords = []
+
+    for word in tokenize(question):
+
+        if len(word) < 3:
+            continue
+
+        if word in STOP_WORDS:
+            continue
+
+        if word not in keywords:
+            keywords.append(word)
+
+    return keywords
+
+
+# =========================================================
+# INTENT DETECTION
 # =========================================================
 
 def detect_intents(question):
 
     normalized = normalize_text(question)
+    tokens = tokenize(question)
+
+    normalized_tokens = {
+        token: normalize_word_for_intent(token)
+        for token in tokens
+    }
 
     detected = set()
 
@@ -2429,32 +2650,54 @@ def detect_intents(question):
             if not normalized_word:
                 continue
 
-            # Multi-word phrase
+            # ---------------------------------------------
+            # Multi-word intent
+            # ---------------------------------------------
+
             if " " in normalized_word:
 
                 if normalized_word in normalized:
                     detected.add(intent)
                     break
 
-            else:
+                continue
 
-                if re.search(
-                    rf"\b{re.escape(normalized_word)}\b",
-                    normalized
-                ):
-                    detected.add(intent)
-                    break
+            # ---------------------------------------------
+            # Exact token
+            # ---------------------------------------------
 
-    # Number + child
+            if normalized_word in normalized_tokens:
+                detected.add(intent)
+                break
+
+            # ---------------------------------------------
+            # Stem-like matching
+            # ---------------------------------------------
+
+            base_word = normalize_word_for_intent(
+                normalized_word
+            )
+
+            if not base_word:
+                continue
+
+            if base_word in normalized_tokens.values():
+                detected.add(intent)
+                break
+
+    # ---------------------------------------------
+    # Numerical family evidence
+    # ---------------------------------------------
+
     if re.search(
         r"\b\d+\s+(usaq|usag|ovlad)\b",
-        normalized
+        normalized,
     ):
         detected.add("aile")
 
     elif re.search(
         r"\b(usaq|usag|ovlad)\b",
-        normalized
+        normalized,
     ):
         detected.add("aile")
 
@@ -2467,78 +2710,15 @@ def detect_intents(question):
 
 def detect_question_type(intents):
 
-    if {
-        "toplanis",
-        "ehtiyat",
-        "aile"
-    }.issubset(intents):
-        return "toplanis_ehtiyat_aile"
+    for required, question_type in QUESTION_TYPE_COMBINATIONS:
 
-    if {
-        "toplanis",
-        "ehtiyat"
-    }.issubset(intents):
-        return "toplanis_ehtiyat"
+        if required.issubset(intents):
+            return question_type
 
-    if {
-        "toplanis",
-        "azadetme"
-    }.issubset(intents):
-        return "toplanis_azadetme"
+    for intent in QUESTION_TYPE_PRIORITY:
 
-    if {
-        "cagiris",
-        "mohlet"
-    }.issubset(intents):
-        return "cagiris_mohlet"
-
-    if {
-        "aile",
-        "mohlet"
-    }.issubset(intents):
-        return "aile_mohlet"
-
-    if {
-        "saglamliq",
-        "mohlet"
-    }.issubset(intents):
-        return "saglamliq_mohlet"
-
-    if {
-        "tehsil",
-        "mohlet"
-    }.issubset(intents):
-        return "tehsil_mohlet"
-
-    if {
-        "aile",
-        "toplanis"
-    }.issubset(intents):
-        return "toplanis_aile"
-
-    if "azadetme" in intents:
-        return "azadetme"
-
-    if "mohlet" in intents:
-        return "mohlet"
-
-    if "toplanis" in intents:
-        return "toplanis"
-
-    if "cagiris" in intents:
-        return "cagiris"
-
-    if "ehtiyat" in intents:
-        return "ehtiyat"
-
-    if "aile" in intents:
-        return "aile"
-
-    if "tehsil" in intents:
-        return "tehsil"
-
-    if "saglamliq" in intents:
-        return "saglamliq"
+        if intent in intents:
+            return intent
 
     return "general"
 
@@ -2547,40 +2727,81 @@ def detect_question_type(intents):
 # KEYWORD EXPANSION
 # =========================================================
 
-def expand_keywords(keywords, intents):
+def expand_keywords(
+    keywords,
+    intents,
+):
 
-    expanded = set()
+    expanded = []
+
+    # ---------------------------------------------
+    # User keywords first
+    # ---------------------------------------------
 
     for keyword in keywords:
 
-        normalized = normalize_text(keyword)
+        keyword = normalize_text(keyword)
 
-        if len(normalized) >= 3:
-            expanded.add(normalized)
+        if (
+            len(keyword) >= 3
+            and keyword not in expanded
+        ):
+            expanded.append(keyword)
+
+    # ---------------------------------------------
+    # Intent primary terms
+    # ---------------------------------------------
 
     for intent in intents:
 
-        for word in RELATED_WORDS.get(
+        for term in INTENT_PRIMARY_TERMS.get(
             intent,
-            set()
+            [],
         ):
 
-            normalized = normalize_text(word)
+            term = normalize_text(term)
 
-            if len(normalized) < 3:
-                continue
+            if (
+                len(term) >= 3
+                and term not in expanded
+            ):
+                expanded.append(term)
 
-            if " " in normalized:
-                continue
-
-            expanded.add(normalized)
-
-    return list(expanded)[:MAX_QUERY_TERMS]
+    return expanded[:MAX_QUERY_TERMS]
 
 
 # =========================================================
-# QUERY PHRASES
+# PHRASES
 # =========================================================
+
+IMPORTANT_PHRASES = [
+    "toplanisdan azad",
+    "toplanislardan azad",
+
+    "toplanisa cagir",
+    "toplanisa cagiril",
+    "toplanislara cagir",
+
+    "aile veziyyeti",
+
+    "saglamliq veziyyeti",
+
+    "tehsil alan",
+    "tehsil alanlar",
+
+    "ehtiyatda olan",
+    "ehtiyatda olanlar",
+
+    "muddetli heqiqi herbi xidmet",
+
+    "herbi xidmete cagiris",
+    "herbi xidmete cagiril",
+
+    "mohlet veril",
+
+    "azad edil",
+]
+
 
 def extract_query_phrases(question):
 
@@ -2588,37 +2809,21 @@ def extract_query_phrases(question):
 
     phrases = []
 
-    # Ən vacib hüquqi ifadələr
-    important_patterns = [
-        r"toplanisdan azad",
-        r"toplanisdan azad edil",
-        r"toplanislardan azad",
-        r"toplanisa cagir",
-        r"toplanisa cagiril",
-        r"toplanislara cagir",
-        r"aile veziyyeti",
-        r"sağlamliq veziyyeti",
-        r"saglamliq veziyyeti",
-        r"tehsil alan",
-        r"tehsil alanlar",
-        r"ehtiyatda olan",
-        r"ehtiyatda olanlar",
-        r"muddetli heqiqi herbi xidmet",
-        r"herbi xidmete cagiris",
-        r"herbi xidmete cagiril",
-        r"mohlet veril",
-        r"azad edil",
-    ]
+    # ---------------------------------------------
+    # Important legal phrases
+    # ---------------------------------------------
 
-    for pattern in important_patterns:
+    for pattern in IMPORTANT_PHRASES:
 
-        if re.search(
-            pattern,
-            normalized
-        ):
+        pattern = normalize_text(pattern)
+
+        if pattern in normalized:
             phrases.append(pattern)
 
-    # Sualdan 2-3 sözlük phrase-lər
+    # ---------------------------------------------
+    # Dynamic 3-word / 2-word phrases
+    # ---------------------------------------------
+
     words = [
         word
         for word in tokenize(question)
@@ -2628,18 +2833,64 @@ def extract_query_phrases(question):
 
     for size in (3, 2):
 
-        for i in range(
+        for index in range(
             len(words) - size + 1
         ):
 
             phrase = " ".join(
-                words[i:i + size]
+                words[
+                    index:index + size
+                ]
             )
 
             if phrase not in phrases:
                 phrases.append(phrase)
 
-    return list(dict.fromkeys(phrases))[:12]
+    return list(
+        dict.fromkeys(phrases)
+    )[:MAX_PHRASES]
+
+
+# =========================================================
+# ARTICLE NUMBER EXTRACTION
+# =========================================================
+
+def extract_article_numbers(question):
+
+    normalized = normalize_text(question)
+
+    patterns = [
+        r"\b(\d+\.\d+(?:\.\d+)*)\b",
+
+        r"\b(\d+)-ci\s+madd",
+        r"\b(\d+)-cu\s+madd",
+        r"\b(\d+)-cu\s+maddesi",
+        r"\b(\d+)-cü\s+madd",
+        r"\b(\d+)-cı\s+madd",
+
+        r"\b(\d+)\s+madd",
+
+        r"\bmadd[ae]\s+(\d+(?:\.\d+)*)\b",
+    ]
+
+    found = []
+
+    for pattern in patterns:
+
+        matches = re.findall(
+            pattern,
+            normalized,
+        )
+
+        for match in matches:
+
+            if isinstance(match, tuple):
+                match = match[0]
+
+            if match not in found:
+                found.append(match)
+
+    return found
 
 
 # =========================================================
@@ -2660,7 +2911,7 @@ def analyze_query(question):
 
     expanded_keywords = expand_keywords(
         keywords,
-        intents
+        intents,
     )
 
     phrases = extract_query_phrases(
@@ -2669,7 +2920,7 @@ def analyze_query(question):
 
     numbers = re.findall(
         r"\b\d+(?:[.,]\d+)?\b",
-        normalized
+        normalized,
     )
 
     article_numbers = extract_article_numbers(
@@ -2677,6 +2928,7 @@ def analyze_query(question):
     )
 
     return {
+        "normalized": normalized,
         "keywords": keywords,
         "expanded_keywords": expanded_keywords,
         "phrases": phrases,
@@ -2701,31 +2953,90 @@ def base_article_queryset():
 
 
 # =========================================================
+# EXACT ARTICLE SEARCH
+# =========================================================
+
+def exact_article_search(question):
+
+    article_numbers = extract_article_numbers(
+        question
+    )
+
+    if not article_numbers:
+        return []
+
+    queryset = base_article_queryset()
+
+    results = []
+
+    for number in article_numbers:
+
+        articles = (
+            queryset
+            .filter(
+                number__iexact=number
+            )
+            [:EXACT_LIMIT]
+        )
+
+        for article in articles:
+
+            results.append({
+                "article": article,
+                "semantic_score": 1.0,
+                "lexical_score": 1.0,
+                "sources": {"exact"},
+            })
+
+    return results
+
+
+# =========================================================
 # SEMANTIC SEARCH
 # =========================================================
 
 def semantic_search(question):
 
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=question
-    )
+    try:
 
-    question_embedding = (
-        response.data[0].embedding
-    )
-
-    articles = (
-        base_article_queryset()
-        .annotate(
-            distance=CosineDistance(
-                "embedding",
-                question_embedding
-            )
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=question,
         )
-        .order_by("distance")
-        [:SEMANTIC_LIMIT]
-    )
+
+        question_embedding = (
+            response.data[0].embedding
+        )
+
+    except Exception as exc:
+
+        print(
+            f"[SEMANTIC SEARCH ERROR] {exc}"
+        )
+
+        return []
+
+    try:
+
+        articles = (
+            base_article_queryset()
+            .annotate(
+                distance=CosineDistance(
+                    "embedding",
+                    question_embedding,
+                )
+            )
+            .order_by("distance")
+            [:SEMANTIC_LIMIT]
+        )
+
+    except Exception as exc:
+
+        print(
+            f"[SEMANTIC DB ERROR] {exc}"
+        )
+
+        return []
 
     results = []
 
@@ -2739,13 +3050,14 @@ def semantic_search(question):
             0.0,
             min(
                 1.0,
-                1.0 - distance
-            )
+                1.0 - distance,
+            ),
         )
 
         results.append({
             "article": article,
             "semantic_score": similarity,
+            "lexical_score": 0.0,
             "sources": {"semantic"},
         })
 
@@ -2753,87 +3065,140 @@ def semantic_search(question):
 
 
 # =========================================================
-# KEYWORD SEARCH
+# LEXICAL SEARCH
 # =========================================================
 
-def keyword_search(
+def lexical_search(
+    question,
     keywords,
-    intents
+    intents,
 ):
 
     search_terms = []
 
+    # ---------------------------------------------
+    # User keywords
+    # ---------------------------------------------
+
     for keyword in keywords:
 
-        keyword = normalize_text(
-            keyword
-        )
+        keyword = normalize_text(keyword)
 
-        if len(keyword) >= 3:
+        if (
+            len(keyword) >= 3
+            and keyword not in search_terms
+        ):
             search_terms.append(keyword)
+
+    # ---------------------------------------------
+    # Intent terms
+    # ---------------------------------------------
 
     for intent in intents:
 
-        for word in RELATED_WORDS.get(
+        for term in INTENT_PRIMARY_TERMS.get(
             intent,
-            set()
+            [],
         ):
 
-            normalized = normalize_text(word)
+            term = normalize_text(term)
 
             if (
-                len(normalized) >= 3
-                and " " not in normalized
+                len(term) >= 3
+                and term not in search_terms
             ):
-                search_terms.append(
-                    normalized
-                )
+                search_terms.append(term)
 
-    search_terms = list(
-        dict.fromkeys(
-            search_terms
-        )
-    )
+    search_terms = search_terms[
+        :MAX_QUERY_TERMS
+    ]
 
     if not search_terms:
         return []
 
-    query = Q()
+    # ---------------------------------------------
+    # PostgreSQL FTS
+    # ---------------------------------------------
+
+    vector = (
+        SearchVector(
+            "title",
+            weight="A",
+        )
+        +
+        SearchVector(
+            "content",
+            weight="B",
+        )
+    )
+
+    query = None
 
     for term in search_terms:
 
-        query |= Q(
-            title__icontains=term
+        current = SearchQuery(
+            term,
+            search_type="websearch",
         )
 
-        query |= Q(
-            content__icontains=term
+        if query is None:
+            query = current
+        else:
+            query = query | current
+
+    try:
+
+        articles = (
+            base_article_queryset()
+            .annotate(
+                search_vector=vector
+            )
+            .annotate(
+                lexical_rank=SearchRank(
+                    "search_vector",
+                    query,
+                )
+            )
+            .filter(
+                search_vector=query
+            )
+            .order_by(
+                "-lexical_rank"
+            )
+            [:LEXICAL_LIMIT]
         )
 
-    articles = list(
-        base_article_queryset()
-        .filter(query)
-        .distinct()
-        [:KEYWORD_LIMIT]
-    )
+    except Exception as exc:
 
-    return [
-        {
+        print(
+            f"[LEXICAL SEARCH ERROR] {exc}"
+        )
+
+        return []
+
+    results = []
+
+    for article in articles:
+
+        rank = float(
+            article.lexical_rank or 0.0
+        )
+
+        results.append({
             "article": article,
             "semantic_score": 0.0,
-            "sources": {"keyword"},
-        }
-        for article in articles
-    ]
+            "lexical_score": rank,
+            "sources": {"lexical"},
+        })
+
+    return results
 
 
 # =========================================================
 # CANDIDATE FUSION
 # =========================================================
 
-def merge_candidates(
-    *result_sets
-):
+def merge_candidates(*result_sets):
 
     candidates = {}
 
@@ -2842,35 +3207,59 @@ def merge_candidates(
         for item in results:
 
             article = item["article"]
+            article_id = article.id
 
-            if article.id not in candidates:
+            if article_id not in candidates:
 
-                candidates[article.id] = {
+                candidates[article_id] = {
                     "article": article,
-                    "semantic_score": item[
-                        "semantic_score"
-                    ],
+
+                    "semantic_score": item.get(
+                        "semantic_score",
+                        0.0,
+                    ),
+
+                    "lexical_score": item.get(
+                        "lexical_score",
+                        0.0,
+                    ),
+
                     "sources": set(
-                        item["sources"]
+                        item.get(
+                            "sources",
+                            set(),
+                        )
                     ),
                 }
 
-            else:
+                continue
 
-                candidates[
-                    article.id
-                ]["semantic_score"] = max(
-                    candidates[
-                        article.id
-                    ]["semantic_score"],
-                    item["semantic_score"]
-                )
+            existing = candidates[
+                article_id
+            ]
 
-                candidates[
-                    article.id
-                ]["sources"].update(
-                    item["sources"]
+            existing["semantic_score"] = max(
+                existing["semantic_score"],
+                item.get(
+                    "semantic_score",
+                    0.0,
+                ),
+            )
+
+            existing["lexical_score"] = max(
+                existing["lexical_score"],
+                item.get(
+                    "lexical_score",
+                    0.0,
+                ),
+            )
+
+            existing["sources"].update(
+                item.get(
+                    "sources",
+                    set(),
                 )
+            )
 
     return list(
         candidates.values()
@@ -2878,7 +3267,7 @@ def merge_candidates(
 
 
 # =========================================================
-# TEXT HELPERS
+# TEXT MATCH HELPERS
 # =========================================================
 
 def contains_word(text, word):
@@ -2886,14 +3275,10 @@ def contains_word(text, word):
     if not text or not word:
         return False
 
-    pattern = (
-        rf"\b{re.escape(word)}\b"
-    )
-
     return bool(
         re.search(
-            pattern,
-            text
+            rf"\b{re.escape(word)}\b",
+            text,
         )
     )
 
@@ -2912,7 +3297,7 @@ def contains_phrase(text, phrase):
 
 def calculate_keyword_score(
     article,
-    keywords
+    keywords,
 ):
 
     title = normalize_text(
@@ -2937,18 +3322,18 @@ def calculate_keyword_score(
 
         if contains_word(
             title,
-            keyword
+            keyword,
         ):
 
-            score += TITLE_MATCH_SCORE
+            score += TITLE_KEYWORD_SCORE
             matched += 1
 
         elif contains_word(
             content,
-            keyword
+            keyword,
         ):
 
-            score += CONTENT_MATCH_SCORE
+            score += CONTENT_KEYWORD_SCORE
             matched += 1
 
     return score, matched
@@ -2960,7 +3345,7 @@ def calculate_keyword_score(
 
 def calculate_phrase_score(
     article,
-    phrases
+    phrases,
 ):
 
     title = normalize_text(
@@ -2985,7 +3370,7 @@ def calculate_phrase_score(
 
         if contains_phrase(
             title,
-            phrase
+            phrase,
         ):
 
             score += PHRASE_TITLE_SCORE
@@ -2993,7 +3378,7 @@ def calculate_phrase_score(
 
         elif contains_phrase(
             content,
-            phrase
+            phrase,
         ):
 
             score += PHRASE_CONTENT_SCORE
@@ -3008,7 +3393,7 @@ def calculate_phrase_score(
 
 def calculate_concept_score(
     article,
-    intents
+    intents,
 ):
 
     title = normalize_text(
@@ -3023,15 +3408,15 @@ def calculate_concept_score(
 
     for intent in intents:
 
-        related = RELATED_WORDS.get(
+        related_words = RELATED_WORDS.get(
             intent,
-            set()
+            set(),
         )
 
         title_found = False
         content_found = False
 
-        for word in related:
+        for word in related_words:
 
             word = normalize_text(word)
 
@@ -3051,21 +3436,25 @@ def calculate_concept_score(
 
                 if contains_word(
                     title,
-                    word
+                    word,
                 ):
+
                     title_found = True
                     break
 
                 if contains_word(
                     content,
-                    word
+                    word,
                 ):
+
                     content_found = True
 
         if title_found:
+
             score += CONCEPT_TITLE_SCORE
 
         elif content_found:
+
             score += CONCEPT_CONTENT_SCORE
 
     return score
@@ -3078,7 +3467,6 @@ def calculate_concept_score(
 def calculate_legal_score(
     article,
     intents,
-    question_type
 ):
 
     title = normalize_text(
@@ -3091,227 +3479,17 @@ def calculate_legal_score(
 
     score = 0
 
-    # -----------------------------------------------------
-    # TOPLANIŞ + EHTİYAT + AİLƏ
-    # -----------------------------------------------------
-
-    if question_type == "toplanis_ehtiyat_aile":
-
-        if (
-            "ehtiyat" in title
-            and (
-                "toplanis" in title
-                or "telim" in title
-                or "cagiris" in title
-            )
-        ):
-            score += 300
-
-        if (
-            "toplanis" in title
-            and "azad" in title
-        ):
-            score += 280
-
-        if (
-            "aile" in title
-            and (
-                "mohlet" in title
-                or "cagiris" in title
-            )
-        ):
-            score += 230
-
-    # -----------------------------------------------------
-    # TOPLANIŞ + EHTİYAT
-    # -----------------------------------------------------
-
-    elif question_type == "toplanis_ehtiyat":
-
-        if (
-            "ehtiyat" in title
-            and "toplanis" in title
-        ):
-            score += 340
-
-        elif (
-            "ehtiyat" in title
-            and "telim" in title
-        ):
-            score += 270
-
-        elif (
-            "ehtiyat" in title
-            and "cagiris" in title
-        ):
-            score += 250
-
-        elif "toplanis" in title:
-            score += 140
-
-    # -----------------------------------------------------
-    # TOPLANIŞ + AZADOLMA
-    # -----------------------------------------------------
-
-    elif question_type == "toplanis_azadetme":
-
-        if (
-            "toplanis" in title
-            and "azad" in title
-        ):
-            score += 380
-
-        if (
-            "aile" in intents
-            and "aile" in title
-        ):
-            score += 110
-
-        if (
-            "saglamliq" in intents
-            and "saglamliq" in title
-        ):
-            score += 110
-
-        if (
-            "tehsil" in intents
-            and "tehsil" in title
-        ):
-            score += 110
-
-    # -----------------------------------------------------
-    # TOPLANIŞ + AİLƏ
-    # -----------------------------------------------------
-
-    elif question_type == "toplanis_aile":
-
-        if (
-            "toplanis" in title
-            and "azad" in title
-        ):
-            score += 360
-
-        elif "toplanis" in title:
-            score += 180
-
-        if "aile" in title:
-            score += 120
-
-    # -----------------------------------------------------
-    # AİLƏ + MÖHLƏT
-    # -----------------------------------------------------
-
-    elif question_type == "aile_mohlet":
-
-        if (
-            "aile" in title
-            and "mohlet" in title
-        ):
-            score += 370
-
-        elif "aile" in title:
-            score += 160
-
-        elif "mohlet" in title:
-            score += 130
-
-    # -----------------------------------------------------
-    # SAĞLAMLIQ + MÖHLƏT
-    # -----------------------------------------------------
-
-    elif question_type == "saglamliq_mohlet":
-
-        if (
-            "saglamliq" in title
-            and "mohlet" in title
-        ):
-            score += 370
-
-        elif "saglamliq" in title:
-            score += 160
-
-        elif "mohlet" in title:
-            score += 130
-
-    # -----------------------------------------------------
-    # TƏHSİL + MÖHLƏT
-    # -----------------------------------------------------
-
-    elif question_type == "tehsil_mohlet":
-
-        if (
-            "tehsil" in title
-            and "mohlet" in title
-        ):
-            score += 370
-
-        elif "tehsil" in title:
-            score += 160
-
-        elif "mohlet" in title:
-            score += 130
-
-    # -----------------------------------------------------
-    # SIMPLE
-    # -----------------------------------------------------
-
-    elif question_type == "toplanis":
-
-        if "toplanis" in title:
-            score += 240
-
-        elif "telim" in title:
-            score += 145
-
-    elif question_type == "mohlet":
-
-        if "mohlet" in title:
-            score += 240
-
-    elif question_type == "azadetme":
-
-        if "azad" in title:
-            score += 240
-
-    elif question_type == "cagiris":
-
-        if "cagiris" in title:
-            score += 240
-
-    elif question_type == "ehtiyat":
-
-        if "ehtiyat" in title:
-            score += 240
-
-    elif question_type == "aile":
-
-        if "aile" in title:
-            score += 220
-
-    elif question_type == "tehsil":
-
-        if "tehsil" in title:
-            score += 220
-
-    elif question_type == "saglamliq":
-
-        if "saglamliq" in title:
-            score += 220
-
-    # -----------------------------------------------------
-    # CONTENT LEGAL SIGNAL
-    # -----------------------------------------------------
-
     for intent in intents:
 
-        related = RELATED_WORDS.get(
+        related_words = RELATED_WORDS.get(
             intent,
-            set()
+            set(),
         )
 
-        found = 0
+        title_hit = False
+        content_hits = 0
 
-        for word in related:
+        for word in related_words:
 
             word = normalize_text(word)
 
@@ -3320,20 +3498,93 @@ def calculate_legal_score(
 
             if " " in word:
 
-                if word in content:
-                    found += 1
+                if word in title:
+                    title_hit = True
 
-            elif contains_word(
-                content,
-                word
-            ):
-                found += 1
+                elif word in content:
+                    content_hits += 1
 
-        if found >= 2:
-            score += 18
+            else:
 
-        elif found == 1:
-            score += 6
+                if contains_word(
+                    title,
+                    word,
+                ):
+
+                    title_hit = True
+
+                elif contains_word(
+                    content,
+                    word,
+                ):
+
+                    content_hits += 1
+
+        if title_hit:
+
+            score += 20
+
+        elif content_hits >= 3:
+
+            score += 10
+
+        elif content_hits >= 1:
+
+            score += 4
+
+    # ---------------------------------------------
+    # Multiple intent agreement
+    # ---------------------------------------------
+
+    if len(intents) >= 2:
+
+        covered = 0
+
+        for intent in intents:
+
+            related_words = RELATED_WORDS.get(
+                intent,
+                set(),
+            )
+
+            intent_found = False
+
+            for word in related_words:
+
+                word = normalize_text(word)
+
+                if len(word) < 3:
+                    continue
+
+                if " " in word:
+
+                    if (
+                        word in title
+                        or word in content
+                    ):
+                        intent_found = True
+                        break
+
+                else:
+
+                    if (
+                        contains_word(title, word)
+                        or
+                        contains_word(content, word)
+                    ):
+                        intent_found = True
+                        break
+
+            if intent_found:
+                covered += 1
+
+        if covered == len(intents):
+
+            score += 25
+
+        elif covered >= 2:
+
+            score += 10
 
     return score
 
@@ -3344,18 +3595,18 @@ def calculate_legal_score(
 
 def calculate_number_score(
     article,
-    numbers
+    numbers,
 ):
 
     if not numbers:
         return 0
 
-    content = normalize_text(
-        article.content or ""
-    )
-
     title = normalize_text(
         article.title or ""
+    )
+
+    content = normalize_text(
+        article.content or ""
     )
 
     score = 0
@@ -3368,14 +3619,16 @@ def calculate_number_score(
 
         if re.search(
             pattern,
-            title
+            title,
         ):
+
             score += NUMBER_TITLE_SCORE
 
         elif re.search(
             pattern,
-            content
+            content,
         ):
+
             score += NUMBER_CONTENT_SCORE
 
     return score
@@ -3386,7 +3639,7 @@ def calculate_number_score(
 # =========================================================
 
 def calculate_source_score(
-    sources
+    sources,
 ):
 
     score = 0
@@ -3397,11 +3650,14 @@ def calculate_source_score(
     if "semantic" in sources:
         score += SEMANTIC_SOURCE_SCORE
 
-    if "keyword" in sources:
-        score += KEYWORD_SOURCE_SCORE
+    if "lexical" in sources:
+        score += LEXICAL_SOURCE_SCORE
 
     if len(sources) >= 2:
         score += MULTI_SOURCE_BONUS
+
+    if len(sources) >= 3:
+        score += THREE_SOURCE_BONUS
 
     return score
 
@@ -3412,27 +3668,27 @@ def calculate_source_score(
 
 def calculate_intent_evidence(
     article,
-    intents
+    intents,
 ):
-
-    content = normalize_text(
-        article.content or ""
-    )
 
     title = normalize_text(
         article.title or ""
     )
 
-    matched_intents = set()
+    content = normalize_text(
+        article.content or ""
+    )
+
+    matched = set()
 
     for intent in intents:
 
-        related = RELATED_WORDS.get(
+        related_words = RELATED_WORDS.get(
             intent,
-            set()
+            set(),
         )
 
-        for word in related:
+        for word in related_words:
 
             word = normalize_text(word)
 
@@ -3445,23 +3701,28 @@ def calculate_intent_evidence(
                     word in title
                     or word in content
                 ):
-                    matched_intents.add(
-                        intent
-                    )
+
+                    matched.add(intent)
                     break
 
             else:
 
                 if (
-                    contains_word(title, word)
-                    or contains_word(content, word)
-                ):
-                    matched_intents.add(
-                        intent
+                    contains_word(
+                        title,
+                        word,
                     )
+                    or
+                    contains_word(
+                        content,
+                        word,
+                    )
+                ):
+
+                    matched.add(intent)
                     break
 
-    return matched_intents
+    return matched
 
 
 # =========================================================
@@ -3470,7 +3731,7 @@ def calculate_intent_evidence(
 
 def rerank_candidates(
     candidates,
-    analysis
+    analysis,
 ):
 
     keywords = analysis[
@@ -3485,10 +3746,6 @@ def rerank_candidates(
         "intents"
     ]
 
-    question_type = analysis[
-        "question_type"
-    ]
-
     numbers = analysis[
         "numbers"
     ]
@@ -3499,26 +3756,55 @@ def rerank_candidates(
 
         article = item["article"]
 
-        semantic_score = item[
-            "semantic_score"
-        ]
+        semantic_score = float(
+            item.get(
+                "semantic_score",
+                0.0,
+            )
+        )
+
+        lexical_score = float(
+            item.get(
+                "lexical_score",
+                0.0,
+            )
+        )
+
+        sources = item["sources"]
+
+        # ---------------------------------------------
+        # Base scores
+        # ---------------------------------------------
 
         semantic_points = (
             semantic_score
             * SEMANTIC_WEIGHT
         )
 
+        lexical_points = min(
+            lexical_score
+            * LEXICAL_WEIGHT,
+            35,
+        )
+
         keyword_points, matched_keywords = (
             calculate_keyword_score(
                 article,
-                keywords
+                keywords,
             )
         )
 
         phrase_points, matched_phrases = (
             calculate_phrase_score(
                 article,
-                phrases
+                phrases,
+            )
+        )
+
+        concept_points = (
+            calculate_concept_score(
+                article,
+                intents,
             )
         )
 
@@ -3526,40 +3812,32 @@ def rerank_candidates(
             calculate_legal_score(
                 article,
                 intents,
-                question_type
-            )
-        )
-
-        concept_points = (
-            calculate_concept_score(
-                article,
-                intents
             )
         )
 
         number_points = (
             calculate_number_score(
                 article,
-                numbers
+                numbers,
             )
         )
 
         source_points = (
             calculate_source_score(
-                item["sources"]
+                sources
             )
         )
+
+        # ---------------------------------------------
+        # Intent evidence
+        # ---------------------------------------------
 
         intent_evidence = (
             calculate_intent_evidence(
                 article,
-                intents
+                intents,
             )
         )
-
-        # -------------------------------------------------
-        # Intent coverage bonus
-        # -------------------------------------------------
 
         intent_bonus = 0
 
@@ -3570,51 +3848,87 @@ def rerank_candidates(
                 / len(intents)
             )
 
-            if coverage >= 1:
-                intent_bonus = 45
+            if coverage >= 1.0:
+
+                intent_bonus = FULL_INTENT_BONUS
 
             elif coverage >= 0.5:
-                intent_bonus = 20
 
-        # -------------------------------------------------
-        # Multiple keyword bonus
-        # -------------------------------------------------
+                intent_bonus = PARTIAL_INTENT_BONUS
 
-        keyword_bonus = 0
+        # ---------------------------------------------
+        # Keyword bonus
+        # ---------------------------------------------
 
-        if matched_keywords >= 4:
-            keyword_bonus = 30
+        if matched_keywords >= 5:
+
+            keyword_bonus = 20
+
+        elif matched_keywords >= 3:
+
+            keyword_bonus = 12
 
         elif matched_keywords >= 2:
-            keyword_bonus = 15
 
-        # -------------------------------------------------
-        # Multiple phrase bonus
-        # -------------------------------------------------
+            keyword_bonus = 6
 
-        phrase_bonus = 0
+        else:
 
-        if matched_phrases >= 2:
-            phrase_bonus = 25
+            keyword_bonus = 0
+
+        # ---------------------------------------------
+        # Phrase bonus
+        # ---------------------------------------------
+
+        if matched_phrases >= 3:
+
+            phrase_bonus = 18
+
+        elif matched_phrases >= 2:
+
+            phrase_bonus = 12
 
         elif matched_phrases == 1:
-            phrase_bonus = 10
 
-        # -------------------------------------------------
+            phrase_bonus = 6
+
+        else:
+
+            phrase_bonus = 0
+
+        # ---------------------------------------------
+        # Lexical quality
+        # ---------------------------------------------
+
+        if lexical_score >= 0.25:
+
+            lexical_bonus = STRONG_LEXICAL_BONUS
+
+        elif lexical_score >= 0.10:
+
+            lexical_bonus = MEDIUM_LEXICAL_BONUS
+
+        else:
+
+            lexical_bonus = 0
+
+        # ---------------------------------------------
         # Final score
-        # -------------------------------------------------
+        # ---------------------------------------------
 
         total_score = (
             semantic_points
+            + lexical_points
             + keyword_points
             + phrase_points
-            + legal_points
             + concept_points
+            + legal_points
             + number_points
             + source_points
             + intent_bonus
             + keyword_bonus
             + phrase_bonus
+            + lexical_bonus
         )
 
         ranked.append({
@@ -3626,17 +3940,20 @@ def rerank_candidates(
             "semantic_score":
                 semantic_score,
 
+            "lexical_score":
+                lexical_score,
+
             "keyword_score":
                 keyword_points,
 
             "phrase_score":
                 phrase_points,
 
-            "legal_score":
-                legal_points,
-
             "concept_score":
                 concept_points,
+
+            "legal_score":
+                legal_points,
 
             "number_score":
                 number_points,
@@ -3653,6 +3970,9 @@ def rerank_candidates(
             "phrase_bonus":
                 phrase_bonus,
 
+            "lexical_bonus":
+                lexical_bonus,
+
             "matched_keywords":
                 matched_keywords,
 
@@ -3663,19 +3983,23 @@ def rerank_candidates(
                 intent_evidence,
 
             "sources":
-                item["sources"],
+                sources,
         })
+
+    # ---------------------------------------------
+    # Ranking
+    # ---------------------------------------------
 
     ranked.sort(
         key=lambda item: (
+            "exact" in item["sources"],
             item["score"],
+            item["semantic_score"],
+            item["lexical_score"],
             item["legal_score"],
             item["phrase_score"],
-            item["concept_score"],
-            item["keyword_score"],
-            item["semantic_score"],
         ),
-        reverse=True
+        reverse=True,
     )
 
     return ranked
@@ -3687,7 +4011,7 @@ def rerank_candidates(
 
 def evidence_check(
     ranked,
-    analysis
+    analysis,
 ):
 
     verified = []
@@ -3700,6 +4024,10 @@ def evidence_check(
 
         semantic_score = item[
             "semantic_score"
+        ]
+
+        lexical_score = item[
+            "lexical_score"
         ]
 
         legal_score = item[
@@ -3718,6 +4046,10 @@ def evidence_check(
             "phrase_score"
         ]
 
+        number_score = item[
+            "number_score"
+        ]
+
         sources = item[
             "sources"
         ]
@@ -3726,17 +4058,18 @@ def evidence_check(
             "intent_evidence"
         ]
 
-        # -------------------------------------------------
-        # Exact
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # Exact article
+        # ---------------------------------------------
 
         if "exact" in sources:
+
             verified.append(item)
             continue
 
-        # -------------------------------------------------
-        # Semantic quality
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # Semantic levels
+        # ---------------------------------------------
 
         strong_semantic = (
             semantic_score
@@ -3748,96 +4081,150 @@ def evidence_check(
             >= MEDIUM_SEMANTIC
         )
 
-        # -------------------------------------------------
-        # Source agreement
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # Multi-source agreement
+        # ---------------------------------------------
 
         multi_source = (
             len(sources) >= 2
         )
 
-        # -------------------------------------------------
-        # Legal match
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # Intent evidence
+        # ---------------------------------------------
 
-        legal_match = (
-            legal_score > 0
-            or concept_score >= 25
-            or phrase_score >= 15
-        )
-
-        # -------------------------------------------------
-        # Intent match
-        # -------------------------------------------------
-
-        intent_match = (
+        has_intent = (
             not intents
-            or len(intent_evidence) > 0
+            or bool(intent_evidence)
         )
 
-        # -------------------------------------------------
-        # Strong semantic + legal
-        # -------------------------------------------------
+        full_intent = (
+            not intents
+            or len(intent_evidence)
+            == len(intents)
+        )
+
+        # ---------------------------------------------
+        # Legal evidence
+        # ---------------------------------------------
+
+        legal_evidence = (
+            legal_score >= 15
+            or concept_score >= 18
+            or phrase_score >= 10
+            or keyword_score >= 14
+            or number_score >= 14
+        )
+
+        # ---------------------------------------------
+        # RULE 1
+        # Strong semantic + legal evidence
+        # ---------------------------------------------
 
         if (
             strong_semantic
-            and legal_match
-            and intent_match
+            and legal_evidence
+            and has_intent
         ):
+
             verified.append(item)
             continue
 
-        # -------------------------------------------------
-        # Multiple retrieval methods
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # RULE 2
+        # Multi-source agreement
+        # ---------------------------------------------
 
         if (
             multi_source
-            and legal_match
+            and (
+                full_intent
+                or legal_evidence
+            )
         ):
+
             verified.append(item)
             continue
 
-        # -------------------------------------------------
-        # Medium semantic + concept
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # RULE 3
+        # Strong lexical
+        # ---------------------------------------------
+
+        if (
+            lexical_score >= 0.20
+            and legal_evidence
+        ):
+
+            verified.append(item)
+            continue
+
+        # ---------------------------------------------
+        # RULE 4
+        # Medium semantic
+        # ---------------------------------------------
 
         if (
             medium_semantic
-            and concept_score >= 25
-            and intent_match
+            and (
+                concept_score >= 18
+                or legal_score >= 15
+            )
+            and has_intent
         ):
+
             verified.append(item)
             continue
 
-        # -------------------------------------------------
-        # Strong keyword / phrase
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # RULE 5
+        # Strong phrase
+        # ---------------------------------------------
 
         if (
-            keyword_score >= 32
-            and legal_match
+            phrase_score >= 28
+            and legal_evidence
         ):
+
             verified.append(item)
             continue
+
+        # ---------------------------------------------
+        # RULE 6
+        # Strong keyword
+        # ---------------------------------------------
 
         if (
-            phrase_score >= 15
-            and legal_match
+            keyword_score >= 28
+            and legal_evidence
         ):
+
             verified.append(item)
             continue
 
-        # -------------------------------------------------
-        # General query
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # RULE 7
+        # Strong number evidence
+        # ---------------------------------------------
+
+        if number_score >= 35:
+
+            verified.append(item)
+            continue
+
+        # ---------------------------------------------
+        # RULE 8
+        # General question
+        # ---------------------------------------------
 
         if not intents:
 
             if (
                 strong_semantic
+                or lexical_score >= 0.15
                 or multi_source
             ):
+
                 verified.append(item)
 
     return verified
@@ -3849,7 +4236,7 @@ def evidence_check(
 
 def calculate_confidence(
     verified,
-    ranked
+    ranked,
 ):
 
     if not ranked:
@@ -3860,25 +4247,56 @@ def calculate_confidence(
 
     top = verified[0]
 
-    if "exact" in top["sources"]:
+    sources = top[
+        "sources"
+    ]
+
+    semantic = top[
+        "semantic_score"
+    ]
+
+    legal = top[
+        "legal_score"
+    ]
+
+    lexical = top[
+        "lexical_score"
+    ]
+
+    # ---------------------------------------------
+    # High confidence
+    # ---------------------------------------------
+
+    if "exact" in sources:
         return "high"
 
     if (
-        top["semantic_score"] >= 0.48
-        and top["legal_score"] > 0
+        semantic >= STRONG_SEMANTIC
+        and legal >= 15
     ):
         return "high"
 
     if (
-        len(top["sources"]) >= 2
-        and top["legal_score"] > 0
+        len(sources) >= 2
+        and legal >= 15
     ):
         return "high"
 
     if (
-        top["semantic_score"] >= 0.32
-        or top["concept_score"] >= 25
-        or top["phrase_score"] >= 15
+        lexical >= 0.20
+        and legal >= 15
+    ):
+        return "high"
+
+    # ---------------------------------------------
+    # Medium confidence
+    # ---------------------------------------------
+
+    if (
+        semantic >= MEDIUM_SEMANTIC
+        or legal >= 15
+        or top["concept_score"] >= 18
+        or top["phrase_score"] >= 10
     ):
         return "medium"
 
@@ -3890,8 +4308,8 @@ def calculate_confidence(
 # =========================================================
 
 def select_diverse_articles(
-    items,
-    limit
+    articles,
+    limit,
 ):
 
     selected = []
@@ -3899,33 +4317,32 @@ def select_diverse_articles(
     seen_ids = set()
     seen_laws = defaultdict(int)
 
-    for item in items:
+    for article in articles:
 
         if len(selected) >= limit:
             break
 
-        article = item["article"]
+        article_id = article.id
 
-        if article.id in seen_ids:
+        if article_id in seen_ids:
             continue
 
-        law_id = (
-            article.law_id
-            if hasattr(article, "law_id")
-            else None
+        law_id = getattr(
+            article,
+            "law_id",
+            None,
         )
 
         # Eyni qanundan maksimum 3 maddə
-        if law_id is not None:
-
-            if seen_laws[law_id] >= 3:
-                continue
+        if (
+            law_id is not None
+            and seen_laws[law_id] >= 3
+        ):
+            continue
 
         selected.append(article)
 
-        seen_ids.add(
-            article.id
-        )
+        seen_ids.add(article_id)
 
         if law_id is not None:
             seen_laws[law_id] += 1
@@ -3940,40 +4357,32 @@ def select_diverse_articles(
 def select_final_articles(
     verified,
     ranked,
-    limit=FINAL_LIMIT
+    limit=FINAL_LIMIT,
 ):
 
-    # Verified-lər artıq ən təhlükəsiz
-    # nəticələrdir.
     selected_items = []
-
     seen_ids = set()
 
-    # -----------------------------------------------------
-    # 1. Verified
-    # -----------------------------------------------------
+    # ---------------------------------------------
+    # VERIFIED FIRST
+    # ---------------------------------------------
 
     for item in verified:
 
         if len(selected_items) >= limit:
             break
 
-        article = item[
-            "article"
-        ]
+        article = item["article"]
 
         if article.id in seen_ids:
             continue
 
         selected_items.append(item)
+        seen_ids.add(article.id)
 
-        seen_ids.add(
-            article.id
-        )
-
-    # -----------------------------------------------------
-    # 2. Ranked fallback
-    # -----------------------------------------------------
+    # ---------------------------------------------
+    # FALLBACK
+    # ---------------------------------------------
 
     if len(selected_items) < limit:
 
@@ -3982,9 +4391,7 @@ def select_final_articles(
             if len(selected_items) >= limit:
                 break
 
-            article = item[
-                "article"
-            ]
+            article = item["article"]
 
             if article.id in seen_ids:
                 continue
@@ -3993,32 +4400,43 @@ def select_final_articles(
                 "semantic_score"
             ]
 
+            lexical_score = item[
+                "lexical_score"
+            ]
+
             sources = item[
                 "sources"
             ]
 
-            # Tək semantic və zəif nəticə
+            # Tamamilə zəif semantic candidate
             if (
                 semantic_score
                 < MIN_SEMANTIC_SCORE
-                and sources
-                == {"semantic"}
+                and lexical_score
+                < 0.05
+                and sources == {"semantic"}
             ):
                 continue
 
             selected_items.append(item)
+            seen_ids.add(article.id)
 
-            seen_ids.add(
-                article.id
-            )
+    # ---------------------------------------------
+    # Extract articles
+    # ---------------------------------------------
 
-    # -----------------------------------------------------
-    # 3. Diversity
-    # -----------------------------------------------------
+    articles = [
+        item["article"]
+        for item in selected_items
+    ]
+
+    # ---------------------------------------------
+    # Diversity
+    # ---------------------------------------------
 
     return select_diverse_articles(
-        selected_items,
-        limit
+        articles,
+        limit,
     )
 
 
@@ -4032,7 +4450,7 @@ def print_search_debug(
     ranked,
     verified,
     final_articles,
-    confidence
+    confidence,
 ):
 
     print(
@@ -4044,27 +4462,33 @@ def print_search_debug(
     )
 
     print(
-        f"KEYWORDS: {analysis['keywords']}"
+        f"KEYWORDS: "
+        f"{analysis['keywords']}"
     )
 
     print(
-        f"EXPANDED: {analysis['expanded_keywords']}"
+        f"EXPANDED: "
+        f"{analysis['expanded_keywords']}"
     )
 
     print(
-        f"PHRASES: {analysis['phrases']}"
+        f"PHRASES: "
+        f"{analysis['phrases']}"
     )
 
     print(
-        f"INTENTS: {analysis['intents']}"
+        f"INTENTS: "
+        f"{analysis['intents']}"
     )
 
     print(
-        f"QUESTION TYPE: {analysis['question_type']}"
+        f"QUESTION TYPE: "
+        f"{analysis['question_type']}"
     )
 
     print(
-        f"NUMBERS: {analysis['numbers']}"
+        f"NUMBERS: "
+        f"{analysis['numbers']}"
     )
 
     print(
@@ -4073,7 +4497,8 @@ def print_search_debug(
     )
 
     print(
-        f"CONFIDENCE: {confidence}"
+        f"CONFIDENCE: "
+        f"{confidence}"
     )
 
     print(
@@ -4082,25 +4507,24 @@ def print_search_debug(
 
     for index, item in enumerate(
         ranked[:10],
-        start=1
+        start=1,
     ):
 
-        article = item[
-            "article"
-        ]
+        article = item["article"]
 
         print(
             f"{index}. "
             f"Maddə {article.number} | "
             f"Score={item['score']:.2f} | "
             f"Semantic={item['semantic_score']:.4f} | "
+            f"Lexical={item['lexical_score']:.4f} | "
             f"Keyword={item['keyword_score']} | "
             f"Phrase={item['phrase_score']} | "
             f"Legal={item['legal_score']} | "
             f"Concept={item['concept_score']} | "
             f"Number={item['number_score']} | "
             f"Source={item['source_score']} | "
-            f"IntentBonus={item['intent_bonus']} | "
+            f"Intent={item['intent_bonus']} | "
             f"Matched={item['matched_keywords']} | "
             f"Sources={item['sources']} | "
             f"{article.title}"
@@ -4111,18 +4535,19 @@ def print_search_debug(
     )
 
     for index, item in enumerate(
-        verified,
-        start=1
+        verified[:10],
+        start=1,
     ):
 
-        article = item[
-            "article"
-        ]
+        article = item["article"]
 
         print(
             f"{index}. "
             f"Maddə {article.number} | "
             f"Score={item['score']:.2f} | "
+            f"Semantic={item['semantic_score']:.4f} | "
+            f"Lexical={item['lexical_score']:.4f} | "
+            f"Legal={item['legal_score']} | "
             f"Sources={item['sources']} | "
             f"{article.title}"
         )
@@ -4133,7 +4558,7 @@ def print_search_debug(
 
     for index, article in enumerate(
         final_articles,
-        start=1
+        start=1,
     ):
 
         print(
@@ -4148,13 +4573,17 @@ def print_search_debug(
 
 
 # =========================================================
-# MAIN SEARCH
+# MAIN SEARCH PIPELINE
 # =========================================================
 
 def search_articles(
     question,
-    limit=FINAL_LIMIT
+    limit=FINAL_LIMIT,
 ):
+
+    # =====================================================
+    # INPUT VALIDATION
+    # =====================================================
 
     if not question:
         return []
@@ -4175,28 +4604,35 @@ def search_articles(
     )
 
     # =====================================================
-    # 2. EXACT
+    # 2. EXACT ARTICLE SEARCH
     # =====================================================
 
-    exact_results = exact_article_search(
-        question
+    exact_results = (
+        exact_article_search(
+            question
+        )
     )
 
     # =====================================================
-    # 3. SEMANTIC
+    # 3. SEMANTIC SEARCH
     # =====================================================
 
-    semantic_results = semantic_search(
-        question
+    semantic_results = (
+        semantic_search(
+            question
+        )
     )
 
     # =====================================================
-    # 4. KEYWORD
+    # 4. LEXICAL SEARCH
     # =====================================================
 
-    keyword_results = keyword_search(
-        analysis["keywords"],
-        analysis["intents"]
+    lexical_results = (
+        lexical_search(
+            question,
+            analysis["keywords"],
+            analysis["intents"],
+        )
     )
 
     # =====================================================
@@ -4206,7 +4642,7 @@ def search_articles(
     candidates = merge_candidates(
         exact_results,
         semantic_results,
-        keyword_results
+        lexical_results,
     )
 
     # =====================================================
@@ -4215,16 +4651,16 @@ def search_articles(
 
     ranked = rerank_candidates(
         candidates,
-        analysis
+        analysis,
     )
 
     # =====================================================
-    # 7. EVIDENCE
+    # 7. EVIDENCE VALIDATION
     # =====================================================
 
     verified = evidence_check(
         ranked,
-        analysis
+        analysis,
     )
 
     # =====================================================
@@ -4233,17 +4669,17 @@ def search_articles(
 
     confidence = calculate_confidence(
         verified,
-        ranked
+        ranked,
     )
 
     # =====================================================
-    # 9. FINAL
+    # 9. FINAL ARTICLES
     # =====================================================
 
     final_articles = select_final_articles(
         verified,
         ranked,
-        limit=limit
+        limit=limit,
     )
 
     # =====================================================
@@ -4256,7 +4692,7 @@ def search_articles(
         ranked,
         verified,
         final_articles,
-        confidence
+        confidence,
     )
 
     return final_articles
