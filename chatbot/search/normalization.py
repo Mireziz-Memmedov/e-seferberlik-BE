@@ -72,6 +72,12 @@ def normalize_text(text):
     text = re.sub(r"\.{2,}", ".", text)
     return re.sub(r"\s+", " ", text).strip()
 
+def tokenize(text):
+    normalized = normalize_text(text)
+    if not normalized:
+        return []
+    return normalized.split()
+
 ARTICLE_PATTERN = re.compile(r"\b\d+(?:\.\d+)+\b")
 SIMPLE_NUMBER_PATTERN = re.compile(r"\b\d+\b")
 
