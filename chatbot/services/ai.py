@@ -535,7 +535,6 @@ def ask_ai(question):
     # SEARCH
     # =========================================
 
-    # search_articles əvəzinə idxal edilən düzgün `search` funksiyası çağrılır
     search_results = search(
         question,
         limit=5
@@ -548,20 +547,27 @@ def ask_ai(question):
     context_parts = []
 
     for item in search_results:
-        # search() nəticəsindən `article` obyektini və ya lüğətini çıxarırıq
-        article = item.get("article") if isinstance(item, dict) else item
-        if not article:
+        if not item:
             continue
 
-        # Həm dict, həm də obyekt ola biləcəyi üçün təhlükəsiz oxunma:
-        content = article.get("content", "") if isinstance(article, dict) else getattr(article, "content", "")
-        title = article.get("title", "") if isinstance(article, dict) else getattr(article, "title", "")
-        number = article.get("article_number", "") if isinstance(article, dict) else getattr(article, "article_number", "")
-        
-        law = article.get("law") if isinstance(article, dict) else getattr(article, "law", None)
-        law_title = law.get("title", "") if isinstance(law, dict) else getattr(law, "title", "") if law else "Qanun"
+        if isinstance(item, dict):
+            article = item.get("article") or item
+        else:
+            article = item
 
-        # Çox uzun maddələrin konteksti həddindən artıq böyütməsinin qarşısını alır
+        if isinstance(article, dict):
+            content = article.get("content", "")
+            title = article.get("title", "")
+            number = article.get("article_number", "") or article.get("number", "")
+            law = article.get("law")
+            law_title = law.get("title", "Qanun") if isinstance(law, dict) else getattr(law, "title", "Qanun") if law else "Qanun"
+        else:
+            content = getattr(article, "content", "")
+            title = getattr(article, "title", "")
+            number = getattr(article, "article_number", "") or getattr(article, "number", "")
+            law = getattr(article, "law", None)
+            law_title = getattr(law, "title", "Qanun") if law else "Qanun"
+
         content = (content or "")[:6000]
 
         context_parts.append(
@@ -696,7 +702,7 @@ QANUN KONTEKSTİ:
 """
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # və ya layihənizdə istifadə etdiyiniz real model adı
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_instructions},
             {"role": "user", "content": user_content}
