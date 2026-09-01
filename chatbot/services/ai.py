@@ -499,8 +499,7 @@
 
 from openai import OpenAI
 from django.conf import settings
-
-# from .search import search_articles
+from .pipeli import search 
 
 
 client = OpenAI(
