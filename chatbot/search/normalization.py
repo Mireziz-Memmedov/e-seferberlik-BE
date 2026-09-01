@@ -49,6 +49,7 @@ SUFFIXES_RAW = [
 ]
 
 def _norm_token_for_indexing(s):
+
     if not s: return ""
     s = unicodedata.normalize("NFKC", str(s)).translate(CHAR_MAP).lower()
     s = re.sub(r"[’'`´]", "", s)
