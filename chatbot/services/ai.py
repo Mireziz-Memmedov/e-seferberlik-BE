@@ -499,7 +499,7 @@
 
 from openai import OpenAI
 from django.conf import settings
-from .pipeli import search 
+from .pipeline import search 
 
 
 client = OpenAI(
