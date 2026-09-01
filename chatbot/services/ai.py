@@ -535,7 +535,8 @@ def ask_ai(question):
     # SEARCH
     # =========================================
 
-    articles = search_articles(
+    # search_articles əvəzinə idxal edilən düzgün `search` funksiyası çağrılır
+    search_results = search(
         question,
         limit=5
     )
@@ -546,24 +547,33 @@ def ask_ai(question):
 
     context_parts = []
 
-    for article in articles:
+    for item in search_results:
+        # search() nəticəsindən `article` obyektini və ya lüğətini çıxarırıq
+        article = item.get("article") if isinstance(item, dict) else item
+        if not article:
+            continue
 
-        content = article.content or ""
+        # Həm dict, həm də obyekt ola biləcəyi üçün təhlükəsiz oxunma:
+        content = article.get("content", "") if isinstance(article, dict) else getattr(article, "content", "")
+        title = article.get("title", "") if isinstance(article, dict) else getattr(article, "title", "")
+        number = article.get("article_number", "") if isinstance(article, dict) else getattr(article, "article_number", "")
+        
+        law = article.get("law") if isinstance(article, dict) else getattr(article, "law", None)
+        law_title = law.get("title", "") if isinstance(law, dict) else getattr(law, "title", "") if law else "Qanun"
 
-        # Çox uzun maddələrin konteksti
-        # həddindən artıq böyütməsinin qarşısını alır
-        content = content[:6000]
+        # Çox uzun maddələrin konteksti həddindən artıq böyütməsinin qarşısını alır
+        content = (content or "")[:6000]
 
         context_parts.append(
             f"""
 QANUN:
-{article.law.title}
+{law_title}
 
 MADDƏ:
-{article.number}
+{number}
 
 BAŞLIQ:
-{article.title}
+{title}
 
 MƏTN:
 {content}
@@ -613,7 +623,7 @@ hüquqi məlumat köməkçisən.
 - Bir maddənin məlumatını başqa maddəyə aid etmə.
 - Qanun mətnindən çıxmayan hüquqi nəticə yaratma.
 - Kontekstdə cavab üçün kifayət qədər məlumat yoxdursa,
-  bunu açıq şəkildə bildir.
+ bunu açıq şəkildə bildir.
 - Məlumat çatışmırsa, təxmin etmə.
 
 ==================================================
@@ -686,7 +696,7 @@ QANUN KONTEKSTİ:
 """
 
     response = client.chat.completions.create(
-        model="gpt-5-mini",
+        model="gpt-4o-mini",  # və ya layihənizdə istifadə etdiyiniz real model adı
         messages=[
             {"role": "system", "content": system_instructions},
             {"role": "user", "content": user_content}
