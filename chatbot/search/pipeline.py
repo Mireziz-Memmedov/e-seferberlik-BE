@@ -1,5 +1,5 @@
 from .normalization import normalize_text
-from .intents import analyze_query
+from .intents import analyze_intent
 from .semantic import semantic_search
 from .lexical import lexical_search
 from .reranking import rerank_results
