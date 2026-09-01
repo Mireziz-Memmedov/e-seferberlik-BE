@@ -1,6 +1,6 @@
 from .normalization import normalize_text
 from .intents import analyze_intent
-from .semantic import semantic_search
+from .semantic import hybrid_search
 from .lexical import lexical_search
 from .reranking import rerank_results
 from .selection import select_results
@@ -18,7 +18,7 @@ def search(
     normalized = normalize_text(query)
     analysis = analyze_query(query)
 
-    semantic_results = semantic_search(
+    semantic_results = hybrid_search(
         normalized,
         limit=20,
     )
@@ -34,7 +34,7 @@ def search(
     # 1. SEMANTIC SEARCH INTEGRATION
     # -----------------------------
     for item in semantic_results:
-        # semantic_search-in qaytardığı struktura əsasən article və distance təyini
+        # hybrid_search-in qaytardığı struktura əsasən article və distance təyini
         article = item.get("article", item) if isinstance(item, dict) else item
         article_id = article.id
 
