@@ -1,141 +1,141 @@
-from .normalization import normalize_text
-from .intents import analyze_intent  
-from .semantic import hybrid_search
-from .lexical import lexical_search
-from .reranking import rerank_results
-from .selection import select_results
-from .validation import validate_query
+# from .normalization import normalize_text
+# from .intents import analyze_intent  
+# from .semantic import hybrid_search
+# from .lexical import lexical_search
+# from .reranking import rerank_results
+# from .selection import select_results
+# from .validation import validate_query
 
 
-def search(
-    query: str,
-    limit: int = 5,
-) -> list[dict]:
+# def search(
+#     query: str,
+#     limit: int = 5,
+# ) -> list[dict]:
 
-    if not validate_query(query):
-        return []
+#     if not validate_query(query):
+#         return []
 
-    normalized = normalize_text(query)
-    analysis = analyze_intent(query) or {}  # None gəlmə ehtimalına qarşı təhlükəsizlik
+#     normalized = normalize_text(query)
+#     analysis = analyze_intent(query) or {}  # None gəlmə ehtimalına qarşı təhlükəsizlik
 
-    semantic_results = hybrid_search(
-        normalized,
-        limit=20,
-    )
+#     semantic_results = hybrid_search(
+#         normalized,
+#         limit=20,
+#     )
 
-    lexical_results = lexical_search(
-        normalized,
-        limit=30,
-    )
+#     lexical_results = lexical_search(
+#         normalized,
+#         limit=30,
+#     )
 
-    results = {}
+#     results = {}
 
-    # -----------------------------
-    # 1. SEMANTIC SEARCH INTEGRATION
-    # -----------------------------
-    for item in semantic_results:
-        if isinstance(item, dict):
-            article = item.get("article", item)
-            distance = item.get("distance", 0.0)
-        else:
-            article = item
-            distance = getattr(article, "distance", 0.0)
+#     # -----------------------------
+#     # 1. SEMANTIC SEARCH INTEGRATION
+#     # -----------------------------
+#     for item in semantic_results:
+#         if isinstance(item, dict):
+#             article = item.get("article", item)
+#             distance = item.get("distance", 0.0)
+#         else:
+#             article = item
+#             distance = getattr(article, "distance", 0.0)
 
-        # Əgər article hələ də lüğətdirsə, id-ni dictionary kimi götürək, yox əgər obyektdirsə attribute kimi:
-        article_id = article.get("id") if isinstance(article, dict) else getattr(article, "id", None)
-        if not article_id:
-            continue
+#         # Əgər article hələ də lüğətdirsə, id-ni dictionary kimi götürək, yox əgər obyektdirsə attribute kimi:
+#         article_id = article.get("id") if isinstance(article, dict) else getattr(article, "id", None)
+#         if not article_id:
+#             continue
 
-        similarity_score = max(0.0, 1.0 - float(distance))
+#         similarity_score = max(0.0, 1.0 - float(distance))
 
-        results[article_id] = {
-            "article": article,
-            "semantic_score": similarity_score,
-            "lexical_score": 0.0,
-            "intent_score": 0.0,
-            "article_score": 0.0,
-            "phrase_score": 0.0,
-        }
+#         results[article_id] = {
+#             "article": article,
+#             "semantic_score": similarity_score,
+#             "lexical_score": 0.0,
+#             "intent_score": 0.0,
+#             "article_score": 0.0,
+#             "phrase_score": 0.0,
+#         }
 
-    # -----------------------------
-    # 2. LEXICAL SEARCH INTEGRATION
-    # -----------------------------
-    for item in lexical_results:
-        article = item.get("article") if isinstance(item, dict) else getattr(item, "article", item)
-        article_id = article.get("id") if isinstance(article, dict) else getattr(article, "id", None)
+#     # -----------------------------
+#     # 2. LEXICAL SEARCH INTEGRATION
+#     # -----------------------------
+#     for item in lexical_results:
+#         article = item.get("article") if isinstance(item, dict) else getattr(item, "article", item)
+#         article_id = article.get("id") if isinstance(article, dict) else getattr(article, "id", None)
         
-        if not article_id:
-            continue
+#         if not article_id:
+#             continue
 
-        if article_id not in results:
-            results[article_id] = {
-                "article": article,
-                "semantic_score": 0.0,
-                "lexical_score": 0.0,
-                "intent_score": 0.0,
-                "article_score": 0.0,
-                "phrase_score": 0.0,
-            }
+#         if article_id not in results:
+#             results[article_id] = {
+#                 "article": article,
+#                 "semantic_score": 0.0,
+#                 "lexical_score": 0.0,
+#                 "intent_score": 0.0,
+#                 "article_score": 0.0,
+#                 "phrase_score": 0.0,
+#             }
 
-        results[article_id]["lexical_score"] = min(
-            1.0,
-            float(item.get("coverage", 0.0) if isinstance(item, dict) else 0.0),
-        )
+#         results[article_id]["lexical_score"] = min(
+#             1.0,
+#             float(item.get("coverage", 0.0) if isinstance(item, dict) else 0.0),
+#         )
 
-    # -----------------------------
-    # 3. INTENT ANALYSIS
-    # -----------------------------
-    intents = analysis.get("intents", set())
+#     # -----------------------------
+#     # 3. INTENT ANALYSIS
+#     # -----------------------------
+#     intents = analysis.get("intents", set())
 
-    if intents:
-        for result in results.values():
-            article = result["article"]
-            # Həm dict, həm də obyekt ola biləcəyi üçün etibarlı yanaşma:
-            title = article.get("title", "") if isinstance(article, dict) else getattr(article, "title", "")
-            content = article.get("content", "") if isinstance(article, dict) else getattr(article, "content", "")
+#     if intents:
+#         for result in results.values():
+#             article = result["article"]
+#             # Həm dict, həm də obyekt ola biləcəyi üçün etibarlı yanaşma:
+#             title = article.get("title", "") if isinstance(article, dict) else getattr(article, "title", "")
+#             content = article.get("content", "") if isinstance(article, dict) else getattr(article, "content", "")
             
-            article_text = normalize_text(f"{title or ''} {content or ''}")
+#             article_text = normalize_text(f"{title or ''} {content or ''}")
 
-            matched_intents = sum(
-                1 for intent in intents if normalize_text(intent) in article_text
-            )
+#             matched_intents = sum(
+#                 1 for intent in intents if normalize_text(intent) in article_text
+#             )
 
-            result["intent_score"] = min(
-                1.0,
-                matched_intents / len(intents),
-            )
+#             result["intent_score"] = min(
+#                 1.0,
+#                 matched_intents / len(intents),
+#             )
 
-    # -----------------------------
-    # 4. ARTICLE NUMBER MATCHING
-    # -----------------------------
-    article_numbers = analysis.get("article_numbers", [])
+#     # -----------------------------
+#     # 4. ARTICLE NUMBER MATCHING
+#     # -----------------------------
+#     article_numbers = analysis.get("article_numbers", [])
 
-    if article_numbers:
-        for result in results.values():
-            article = result["article"]
+#     if article_numbers:
+#         for result in results.values():
+#             article = result["article"]
             
-            art_num = article.get("article_number", "") if isinstance(article, dict) else getattr(article, "article_number", "")
-            title = article.get("title", "") if isinstance(article, dict) else getattr(article, "title", "")
-            content = article.get("content", "") if isinstance(article, dict) else getattr(article, "content", "")
+#             art_num = article.get("article_number", "") if isinstance(article, dict) else getattr(article, "article_number", "")
+#             title = article.get("title", "") if isinstance(article, dict) else getattr(article, "title", "")
+#             content = article.get("content", "") if isinstance(article, dict) else getattr(article, "content", "")
             
-            art_num_str = normalize_text(str(art_num or ""))
-            art_content_str = normalize_text(f"{title or ''} {content or ''}")
+#             art_num_str = normalize_text(str(art_num or ""))
+#             art_content_str = normalize_text(f"{title or ''} {content or ''}")
 
-            for target_num in article_numbers:
-                target_norm = normalize_text(target_num)
-                if target_norm == art_num_str or target_norm in art_content_str:
-                    result["article_score"] = 1.0
-                    break
+#             for target_num in article_numbers:
+#                 target_norm = normalize_text(target_num)
+#                 if target_norm == art_num_str or target_norm in art_content_str:
+#                     result["article_score"] = 1.0
+#                     break
 
-    # -----------------------------
-    # 5. RERANK & FINAL SELECTION
-    # -----------------------------
-    reranked = rerank_results(
-        list(results.values()),
-        limit=20,
-    )
+#     # -----------------------------
+#     # 5. RERANK & FINAL SELECTION
+#     # -----------------------------
+#     reranked = rerank_results(
+#         list(results.values()),
+#         limit=20,
+#     )
 
-    return select_results(
-        reranked,
-        limit=limit,
-    )
+#     return select_results(
+#         reranked,
+#         limit=limit,
+#     )
