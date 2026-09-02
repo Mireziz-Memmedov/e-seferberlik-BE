@@ -1,2002 +1,3 @@
-# import re
-
-# from openai import OpenAI
-# from django.conf import settings
-# from pgvector.django import CosineDistance
-
-# from chatbot.models import Article
-
-
-# client = OpenAI(
-#     api_key=settings.OPENAI_API_KEY
-# )
-
-
-# # =========================================================
-# # STOP WORDS
-# # =========================================================
-
-# STOP_WORDS = {
-#     "men",
-#     "sen",
-#     "siz",
-#     "biz",
-#     "bu",
-#     "bir",
-#     "ve",
-#     "ile",
-#     "ucun",
-#     "olan",
-#     "olaraq",
-#     "haqqinda",
-#     "nece",
-#     "nedir",
-#     "kimdir",
-#     "kimler",
-#     "hansi",
-#     "hansilar",
-#     "eden",
-#     "edilir",
-#     "edilmesi",
-#     "verilen",
-#     "verilir",
-#     "verilirmi",
-#     "var",
-#     "mi",
-#     "mı",
-#     "mu",
-#     "mü",
-#     "de",
-#     "da",
-#     "ki",
-#     "gore",
-
-#     # Danışıq / qrammatik sözlər
-#     "menim",
-#     "senin",
-#     "sizin",
-#     "bizim",
-#     "oldugum",
-#     "oldugun",
-#     "oldugu",
-#     "olduqda",
-#     "halda",
-#     "halinda",
-#     "bilerem",
-#     "bilərəm",
-#     "biler",
-#     "bilermi",
-#     "bilərmi",
-# }
-
-
-# # =========================================================
-# # NORMALIZE
-# # =========================================================
-
-# def normalize_text(text):
-
-#     if not text:
-#         return ""
-
-#     text = str(text).lower().strip()
-
-#     replacements = {
-#         "ə": "e",
-#         "ı": "i",
-#         "ö": "o",
-#         "ü": "u",
-#         "ğ": "g",
-#         "ş": "s",
-#         "ç": "c",
-#     }
-
-#     for old, new in replacements.items():
-#         text = text.replace(old, new)
-
-#     text = re.sub(r"\s+", " ", text)
-
-#     return text
-
-
-# # =========================================================
-# # KEYWORDS
-# # =========================================================
-
-# def get_keywords(question):
-
-#     normalized = normalize_text(question)
-
-#     words = re.findall(
-#         r"[a-z0-9-]+",
-#         normalized
-#     )
-
-#     keywords = []
-
-#     for word in words:
-
-#         if len(word) < 3:
-#             continue
-
-#         if word in STOP_WORDS:
-#             continue
-
-#         if word not in keywords:
-#             keywords.append(word)
-
-#     return keywords
-
-
-# # =========================================================
-# # RELATED WORDS
-# # =========================================================
-
-# RELATED_WORDS = {
-
-#     # -----------------------------------------------------
-#     # TOPLANIŞ
-#     # -----------------------------------------------------
-
-#     "toplanis": {
-#         "toplanis",
-#         "toplanisa",
-#         "toplanisdan",
-#         "toplanislardan",
-#         "toplanislara",
-#         "toplanislar",
-#         "telim",
-#         "telime",
-#         "telimden",
-#         "telimler",
-#         "telimlere",
-#     },
-
-#     # -----------------------------------------------------
-#     # ÇAĞIRIŞ
-#     # -----------------------------------------------------
-
-#     "cagiris": {
-#         "cagiris",
-#         "cagirisdan",
-#         "cagirisa",
-#         "cagirisla",
-#         "cagir",
-#         "cagirilir",
-#         "cagirilirler",
-#         "cagirilacaq",
-#         "cagirilmasi",
-#         "cagirilma",
-#         "cagirila",
-#         "cagirilmaq",
-#         "cagirilmag",
-#     },
-
-#     # -----------------------------------------------------
-#     # AZADOLMA
-#     # -----------------------------------------------------
-
-#     "azadetme": {
-#         "azad",
-#         "azaddir",
-#         "azadliq",
-#         "azadlar",
-#         "azadetme",
-#         "azad edilen",
-#         "azad edilir",
-#         "azad olunur",
-#         "azad edilmis",
-#         "azad edilmesi",
-#     },
-
-#     # -----------------------------------------------------
-#     # MÖHLƏT
-#     # -----------------------------------------------------
-
-#     "mohlet": {
-#         "mohlet",
-#         "mohletin",
-#         "mohletle",
-#         "mohletler",
-#         "mohletden",
-#         "mohlet verilmesi",
-#         "mohlet verilir",
-#         "mohlet verilm",
-#     },
-
-#     # -----------------------------------------------------
-#     # SAĞLAMLIQ
-#     # -----------------------------------------------------
-
-#     "saglamliq": {
-#         "saglamliq",
-#         "saglamlig",
-#         "saglamligina",
-#         "saglamligindan",
-#         "saglamliqdan",
-#         "saglamliq veziyyeti",
-#         "saglamliq veziyyetine",
-#         "saglamliq veziyyetinden",
-#     },
-
-#     # -----------------------------------------------------
-#     # AİLƏ
-#     # -----------------------------------------------------
-
-#     "aile": {
-#         "aile",
-#         "ailesi",
-#         "ailenin",
-#         "aileye",
-#         "ailevi",
-#         "aile veziyyeti",
-#         "aile veziyyetine",
-
-#         # Uşaq / övlad
-#         "usaq",
-#         "usag",
-#         "usagi",
-#         "usagim",
-#         "usaqlar",
-#         "usaglar",
-#         "usaqlari",
-#         "usaglari",
-#         "usaqlarin",
-#         "usaglarin",
-
-#         "ovlad",
-#         "ovladi",
-#         "ovladim",
-#         "ovladlar",
-#         "ovladlari",
-#         "ovladlarin",
-
-#         # Say ilə istifadə oluna bilən ifadələr
-#         "iki usaq",
-#         "uc usaq",
-#         "dord usaq",
-#         "bes usaq",
-#         "alti usaq",
-#     },
-
-#     # -----------------------------------------------------
-#     # TƏHSİL
-#     # -----------------------------------------------------
-
-#     "tehsil": {
-#         "tehsil",
-#         "tehsili",
-#         "tehsile",
-#         "tehsilde",
-#         "tehsil alan",
-#         "tehsil etmek",
-#         "tehsil alanlar",
-#     },
-
-#     # -----------------------------------------------------
-#     # EHTİYAT
-#     # -----------------------------------------------------
-
-#     "ehtiyat": {
-#         "ehtiyat",
-#         "ehtiyatda",
-#         "ehtiyatdaki",
-#         "ehtiyatdakilar",
-#         "ehtiyatda olan",
-#         "ehtiyatda olanlar",
-#     },
-
-#     # -----------------------------------------------------
-#     # MÜDDƏT
-#     # -----------------------------------------------------
-
-#     "muddet": {
-#         "muddet",
-#         "muddeti",
-#         "muddetler",
-#         "muddetde",
-#         "defe",
-#         "defeyedek",
-#     },
-# }
-
-
-# # =========================================================
-# # INTENTS
-# # =========================================================
-
-# INTENTS = {
-
-#     "toplanis": {
-#         "toplanis",
-#         "toplanisdan",
-#         "toplanislardan",
-#         "toplanisa",
-#         "toplanislara",
-#         "telim",
-#         "telime",
-#         "telimden",
-#         "telimler",
-#         "telimlere",
-#     },
-
-#     "azadetme": {
-#         "azad",
-#         "azaddir",
-#         "azadetme",
-#         "azadliq",
-#     },
-
-#     "mohlet": {
-#         "mohlet",
-#         "mohletin",
-#         "mohletle",
-#         "mohletler",
-#     },
-
-#     "saglamliq": {
-#         "saglamliq",
-#         "saglamlig",
-#         "saglamligina",
-#     },
-
-#     "aile": {
-#         "aile",
-#         "ailesi",
-#         "ailenin",
-#         "ailevi",
-
-#         "usaq",
-#         "usag",
-#         "usagi",
-#         "usagim",
-#         "usaqlar",
-#         "usaglar",
-#         "usaqlari",
-#         "usaglari",
-#         "usaqlarin",
-#         "usaglarin",
-
-#         "ovlad",
-#         "ovladi",
-#         "ovladim",
-#         "ovladlar",
-#         "ovladlari",
-#         "ovladlarin",
-#     },
-
-#     "tehsil": {
-#         "tehsil",
-#         "tehsili",
-#         "tehsile",
-#     },
-
-#     "cagiris": {
-#         "cagiris",
-#         "cagirisdan",
-#         "cagirisa",
-#         "cagirila",
-#         "cagir",
-#     },
-
-#     "ehtiyat": {
-#         "ehtiyat",
-#         "ehtiyatda",
-#         "ehtiyatdaki",
-#         "ehtiyatdakilar",
-#     },
-# }
-
-
-# # =========================================================
-# # INTENT DETECTION
-# # =========================================================
-
-# def detect_intents(question):
-
-#     normalized = normalize_text(question)
-
-#     detected = set()
-
-#     for intent, words in INTENTS.items():
-
-#         for word in words:
-
-#             normalized_word = normalize_text(word)
-
-#             if re.search(
-#                 rf"\b{re.escape(normalized_word)}\b",
-#                 normalized
-#             ):
-#                 detected.add(intent)
-#                 break
-
-#     # -----------------------------------------------------
-#     # UŞAQ / ÖVLAD MƏNTİQİ
-#     # -----------------------------------------------------
-
-#     family_patterns = [
-#         r"\b\d+\s+usaq\b",
-#         r"\b\d+\s+usag\b",
-#         r"\b\d+\s+ovlad\b",
-#         r"\busaq\b",
-#         r"\busag\b",
-#         r"\bovlad\b",
-#     ]
-
-#     for pattern in family_patterns:
-
-#         if re.search(pattern, normalized):
-#             detected.add("aile")
-#             break
-
-#     return detected
-
-
-# # =========================================================
-# # QUESTION TYPE
-# # =========================================================
-
-# def detect_question_type(intents):
-
-#     # -----------------------------------------------------
-#     # TOPLANIŞ + EHTİYAT + AİLƏ
-#     # -----------------------------------------------------
-
-#     if (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#         and "aile" in intents
-#     ):
-#         return "toplanis_ehtiyat_aile"
-
-#     # -----------------------------------------------------
-#     # TOPLANIŞ + EHTİYAT
-#     # -----------------------------------------------------
-
-#     if (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#     ):
-#         return "toplanis_ehtiyat"
-
-#     # -----------------------------------------------------
-#     # TOPLANIŞ + AZADOLMA
-#     # -----------------------------------------------------
-
-#     if (
-#         "toplanis" in intents
-#         and "azadetme" in intents
-#     ):
-#         return "toplanis_azadetme"
-
-#     # -----------------------------------------------------
-#     # ÇAĞIRIŞ + MÖHLƏT
-#     # -----------------------------------------------------
-
-#     if (
-#         "cagiris" in intents
-#         and "mohlet" in intents
-#     ):
-#         return "cagiris_mohlet"
-
-#     # -----------------------------------------------------
-#     # AİLƏ + MÖHLƏT
-#     # -----------------------------------------------------
-
-#     if (
-#         "aile" in intents
-#         and "mohlet" in intents
-#     ):
-#         return "aile_mohlet"
-
-#     # -----------------------------------------------------
-#     # SAĞLAMLIQ + MÖHLƏT
-#     # -----------------------------------------------------
-
-#     if (
-#         "saglamliq" in intents
-#         and "mohlet" in intents
-#     ):
-#         return "saglamliq_mohlet"
-
-#     # -----------------------------------------------------
-#     # TƏHSİL + MÖHLƏT
-#     # -----------------------------------------------------
-
-#     if (
-#         "tehsil" in intents
-#         and "mohlet" in intents
-#     ):
-#         return "tehsil_mohlet"
-
-#     # -----------------------------------------------------
-#     # SADƏ
-#     # -----------------------------------------------------
-
-#     if "azadetme" in intents:
-#         return "azadetme"
-
-#     if "mohlet" in intents:
-#         return "mohlet"
-
-#     if "toplanis" in intents:
-#         return "toplanis"
-
-#     if "cagiris" in intents:
-#         return "cagiris"
-
-#     return "general"
-
-
-# # =========================================================
-# # GROUP MATCH
-# # =========================================================
-
-# def matches_group(text, group_name):
-
-#     text = normalize_text(text)
-
-#     words = RELATED_WORDS.get(
-#         group_name,
-#         set()
-#     )
-
-#     for word in words:
-
-#         normalized_word = normalize_text(word)
-
-#         if re.search(
-#             rf"\b{re.escape(normalized_word)}\b",
-#             text
-#         ):
-#             return True
-
-#     return False
-
-
-# # =========================================================
-# # KEYWORD MATCH
-# # =========================================================
-
-# def keyword_matches(
-#     keyword,
-#     title,
-#     content
-# ):
-
-#     keyword = normalize_text(keyword)
-#     title = normalize_text(title)
-#     content = normalize_text(content)
-
-#     # Birbaşa başlıq
-#     if re.search(
-#         rf"\b{re.escape(keyword)}\b",
-#         title
-#     ):
-#         return "title"
-
-#     # Birbaşa mətn
-#     if re.search(
-#         rf"\b{re.escape(keyword)}\b",
-#         content
-#     ):
-#         return "content"
-
-#     # Əlaqəli sözlər
-#     for group_name, words in RELATED_WORDS.items():
-
-#         normalized_words = {
-#             normalize_text(word)
-#             for word in words
-#         }
-
-#         if keyword in normalized_words:
-
-#             for related in normalized_words:
-
-#                 if re.search(
-#                     rf"\b{re.escape(related)}\b",
-#                     title
-#                 ):
-#                     return "related_title"
-
-#                 if re.search(
-#                     rf"\b{re.escape(related)}\b",
-#                     content
-#                 ):
-#                     return "related_content"
-
-#     return None
-
-
-# # =========================================================
-# # ARTICLE ROLE
-# # =========================================================
-
-# def detect_article_role(
-#     article,
-#     intents
-# ):
-
-#     title = normalize_text(
-#         article.title or ""
-#     )
-
-#     # -----------------------------------------------------
-#     # TOPLANIŞ + EHTİYAT + AİLƏ
-#     # -----------------------------------------------------
-
-#     if (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#         and "aile" in intents
-#     ):
-
-#         # Toplanışdan azadolmanı müəyyən edən maddə
-#         if (
-#             "toplanis" in title
-#             and "azad" in title
-#         ):
-#             return "primary"
-
-#         # Ehtiyatda olanların toplanışa çağırılması
-#         if (
-#             "ehtiyat" in title
-#             and (
-#                 "toplanis" in title
-#                 or "telim" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return "primary"
-
-#         # Ailə / möhlət / çağırış maddəsi
-#         if (
-#             "aile" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return "companion"
-
-#     # -----------------------------------------------------
-#     # TOPLANIŞ + AZADOLMA
-#     # -----------------------------------------------------
-
-#     if (
-#         "toplanis" in intents
-#         and "azadetme" in intents
-#     ):
-
-#         if (
-#             "toplanis" in title
-#             and "azad" in title
-#         ):
-#             return "primary"
-
-#         if (
-#             "aile" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return "companion"
-
-#         if (
-#             "saglamliq" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return "companion"
-
-#         if (
-#             "tehsil" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return "companion"
-
-#     return "normal"
-
-
-# # =========================================================
-# # RELATION SCORE
-# # =========================================================
-
-# def calculate_relation_score(
-#     article,
-#     intents
-# ):
-
-#     title = normalize_text(
-#         article.title or ""
-#     )
-
-#     score = 0
-
-#     # =====================================================
-#     # TOPLANIŞ + EHTİYAT + AİLƏ
-#     # =====================================================
-
-#     if (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#         and "aile" in intents
-#     ):
-
-#         # Toplanışdan azadolma
-#         if (
-#             "toplanis" in title
-#             and "azad" in title
-#         ):
-#             score += 500
-
-#         # Ehtiyat + toplanış
-#         if (
-#             "ehtiyat" in title
-#             and (
-#                 "toplanis" in title
-#                 or "telim" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             score += 400
-
-#         # Ailə + möhlət
-#         if (
-#             "aile" in title
-#             and "mohlet" in title
-#         ):
-#             score += 300
-
-#         # Ailə + çağırış
-#         elif (
-#             "aile" in title
-#             and "cagiris" in title
-#         ):
-#             score += 250
-
-#     # =====================================================
-#     # TOPLANIŞ + EHTİYAT
-#     # =====================================================
-
-#     if (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#     ):
-
-#         if (
-#             "ehtiyat" in title
-#             and "toplanis" in title
-#         ):
-#             score += 450
-
-#         elif (
-#             "ehtiyat" in title
-#             and "telim" in title
-#         ):
-#             score += 300
-
-#         elif (
-#             "ehtiyat" in title
-#             and "cagiris" in title
-#         ):
-#             score += 300
-
-#         elif "toplanis" in title:
-#             score += 180
-
-#     # =====================================================
-#     # TOPLANIŞ + AZADOLMA
-#     # =====================================================
-
-#     if (
-#         "toplanis" in intents
-#         and "azadetme" in intents
-#     ):
-
-#         if (
-#             "toplanis" in title
-#             and "azad" in title
-#         ):
-#             score += 500
-
-#         if "aile" in intents:
-
-#             if (
-#                 "aile" in title
-#                 and (
-#                     "mohlet" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 score += 300
-
-#         if "saglamliq" in intents:
-
-#             if (
-#                 "saglamliq" in title
-#                 and (
-#                     "mohlet" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 score += 300
-
-#         if "tehsil" in intents:
-
-#             if (
-#                 "tehsil" in title
-#                 and (
-#                     "mohlet" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 score += 300
-
-#     # =====================================================
-#     # AİLƏ + MÖHLƏT
-#     # =====================================================
-
-#     if (
-#         "aile" in intents
-#         and "mohlet" in intents
-#     ):
-
-#         if (
-#             "aile" in title
-#             and "mohlet" in title
-#         ):
-#             score += 350
-
-#         elif "aile" in title:
-#             score += 180
-
-#     # =====================================================
-#     # SAĞLAMLIQ + MÖHLƏT
-#     # =====================================================
-
-#     if (
-#         "saglamliq" in intents
-#         and "mohlet" in intents
-#     ):
-
-#         if (
-#             "saglamliq" in title
-#             and "mohlet" in title
-#         ):
-#             score += 350
-
-#         elif "saglamliq" in title:
-#             score += 180
-
-#     # =====================================================
-#     # TƏHSİL + MÖHLƏT
-#     # =====================================================
-
-#     if (
-#         "tehsil" in intents
-#         and "mohlet" in intents
-#     ):
-
-#         if (
-#             "tehsil" in title
-#             and "mohlet" in title
-#         ):
-#             score += 350
-
-#         elif "tehsil" in title:
-#             score += 180
-
-#     # =====================================================
-#     # SADƏ AZADOLMA
-#     # =====================================================
-
-#     if "azadetme" in intents:
-
-#         if (
-#             "azad" in title
-#             and "toplanis" in title
-#         ):
-#             score += 250
-
-#         elif "azad" in title:
-#             score += 120
-
-#     # =====================================================
-#     # SADƏ TOPLANIŞ
-#     # =====================================================
-
-#     if "toplanis" in intents:
-
-#         if "toplanis" in title:
-#             score += 120
-
-#         elif "telim" in title:
-#             score += 80
-
-#     return score
-
-
-# # =========================================================
-# # CONTEXT SCORE
-# # =========================================================
-
-# def calculate_context_score(
-#     article,
-#     intents
-# ):
-
-#     title = normalize_text(
-#         article.title or ""
-#     )
-
-#     score = 0
-
-#     # =====================================================
-#     # TOPLANIŞ + EHTİYAT + AİLƏ
-#     # =====================================================
-
-#     if (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#         and "aile" in intents
-#     ):
-
-#         # Toplanış maddəsi
-#         if (
-#             "toplanis" in title
-#             and "azad" in title
-#         ):
-#             score += 250
-
-#         # Ehtiyatda olanların çağırılması
-#         if (
-#             "ehtiyat" in title
-#             and (
-#                 "toplanis" in title
-#                 or "telim" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             score += 250
-
-#         # Ailə üzrə hüquqi əsas
-#         if (
-#             "aile" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             score += 200
-
-#     # =====================================================
-#     # TOPLANIŞ + AZADOLMA
-#     # =====================================================
-
-#     if (
-#         "toplanis" in intents
-#         and "azadetme" in intents
-#     ):
-
-#         if (
-#             "toplanis" in title
-#             and "azad" in title
-#         ):
-#             score += 180
-
-#         if "aile" in intents:
-
-#             if (
-#                 "aile" in title
-#                 and "mohlet" in title
-#             ):
-#                 score += 180
-
-#         if "saglamliq" in intents:
-
-#             if (
-#                 "saglamliq" in title
-#                 and "mohlet" in title
-#             ):
-#                 score += 180
-
-#         if "tehsil" in intents:
-
-#             if (
-#                 "tehsil" in title
-#                 and "mohlet" in title
-#             ):
-#                 score += 180
-
-#     return score
-
-
-# # =========================================================
-# # DIRECT CONTEXT ARTICLE
-# # =========================================================
-
-# def is_direct_context_article(
-#     article,
-#     intents
-# ):
-
-#     title = normalize_text(
-#         article.title or ""
-#     )
-
-#     # -----------------------------------------------------
-#     # TOPLANIŞ + EHTİYAT + AİLƏ
-#     # -----------------------------------------------------
-
-#     if (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#         and "aile" in intents
-#     ):
-
-#         if (
-#             "ehtiyat" in title
-#             and (
-#                 "toplanis" in title
-#                 or "telim" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return True
-
-#         if (
-#             "aile" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return True
-
-#         if (
-#             "toplanis" in title
-#             and "azad" in title
-#         ):
-#             return True
-
-#     # -----------------------------------------------------
-#     # AİLƏ
-#     # -----------------------------------------------------
-
-#     if "aile" in intents:
-
-#         if (
-#             "aile" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return True
-
-#     # -----------------------------------------------------
-#     # SAĞLAMLIQ
-#     # -----------------------------------------------------
-
-#     if "saglamliq" in intents:
-
-#         if (
-#             "saglamliq" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return True
-
-#     # -----------------------------------------------------
-#     # TƏHSİL
-#     # -----------------------------------------------------
-
-#     if "tehsil" in intents:
-
-#         if (
-#             "tehsil" in title
-#             and (
-#                 "mohlet" in title
-#                 or "cagiris" in title
-#             )
-#         ):
-#             return True
-
-#     return False
-
-
-# # =========================================================
-# # CONTEXT ARTICLE DISCOVERY
-# # =========================================================
-
-# def get_context_articles(intents):
-
-#     context_articles = []
-
-#     # =====================================================
-#     # TOPLANIŞ + EHTİYAT + AİLƏ
-#     # =====================================================
-
-#     if (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#         and "aile" in intents
-#     ):
-
-#         # -------------------------------------------------
-#         # EHTİYAT / TOPLANIŞ
-#         # -------------------------------------------------
-
-#         articles = (
-#             Article.objects
-#             .select_related("law")
-#             .exclude(embedding=None)
-#         )
-
-#         for article in articles:
-
-#             title = normalize_text(
-#                 article.title or ""
-#             )
-
-#             if (
-#                 "ehtiyat" in title
-#                 and (
-#                     "toplanis" in title
-#                     or "telim" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 context_articles.append(article)
-
-#         # -------------------------------------------------
-#         # TOPLANIŞDAN AZADOLMA
-#         # -------------------------------------------------
-
-#         articles = (
-#             Article.objects
-#             .select_related("law")
-#             .exclude(embedding=None)
-#         )
-
-#         for article in articles:
-
-#             title = normalize_text(
-#                 article.title or ""
-#             )
-
-#             if (
-#                 "toplanis" in title
-#                 and "azad" in title
-#             ):
-#                 context_articles.append(article)
-
-#         # -------------------------------------------------
-#         # AİLƏ / MÖHLƏT / ÇAĞIRIŞ
-#         # -------------------------------------------------
-
-#         articles = (
-#             Article.objects
-#             .select_related("law")
-#             .exclude(embedding=None)
-#             .filter(
-#                 title__icontains="Ailə"
-#             )
-#         )
-
-#         for article in articles:
-
-#             title = normalize_text(
-#                 article.title or ""
-#             )
-
-#             if (
-#                 "aile" in title
-#                 and (
-#                     "mohlet" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 context_articles.append(article)
-
-#     # =====================================================
-#     # TOPLANIŞ + EHTİYAT
-#     # =====================================================
-
-#     elif (
-#         "toplanis" in intents
-#         and "ehtiyat" in intents
-#     ):
-
-#         articles = (
-#             Article.objects
-#             .select_related("law")
-#             .exclude(embedding=None)
-#         )
-
-#         for article in articles:
-
-#             title = normalize_text(
-#                 article.title or ""
-#             )
-
-#             if (
-#                 "ehtiyat" in title
-#                 and (
-#                     "toplanis" in title
-#                     or "telim" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 context_articles.append(article)
-
-#     # =====================================================
-#     # TOPLANIŞ + AZADOLMA
-#     # =====================================================
-
-#     elif (
-#         "toplanis" in intents
-#         and "azadetme" in intents
-#     ):
-
-#         if "aile" in intents:
-
-#             articles = (
-#                 Article.objects
-#                 .select_related("law")
-#                 .exclude(embedding=None)
-#                 .filter(
-#                     title__icontains="Ailə"
-#                 )
-#             )
-
-#             for article in articles:
-
-#                 title = normalize_text(
-#                     article.title or ""
-#                 )
-
-#                 if (
-#                     "aile" in title
-#                     and (
-#                         "mohlet" in title
-#                         or "cagiris" in title
-#                     )
-#                 ):
-#                     context_articles.append(article)
-
-#         if "saglamliq" in intents:
-
-#             articles = (
-#                 Article.objects
-#                 .select_related("law")
-#                 .exclude(embedding=None)
-#                 .filter(
-#                     title__icontains="Sağlamlıq"
-#                 )
-#             )
-
-#             for article in articles:
-
-#                 title = normalize_text(
-#                     article.title or ""
-#                 )
-
-#                 if (
-#                     "saglamliq" in title
-#                     and (
-#                         "mohlet" in title
-#                         or "cagiris" in title
-#                     )
-#                 ):
-#                     context_articles.append(article)
-
-#         if "tehsil" in intents:
-
-#             articles = (
-#                 Article.objects
-#                 .select_related("law")
-#                 .exclude(embedding=None)
-#                 .filter(
-#                     title__icontains="Təhsil"
-#                 )
-#             )
-
-#             for article in articles:
-
-#                 title = normalize_text(
-#                     article.title or ""
-#                 )
-
-#                 if (
-#                     "tehsil" in title
-#                     and (
-#                         "mohlet" in title
-#                         or "cagiris" in title
-#                     )
-#                 ):
-#                     context_articles.append(article)
-
-#     return context_articles
-
-
-# # =========================================================
-# # SEARCH
-# # =========================================================
-
-# def search_articles(
-#     question,
-#     limit=5
-# ):
-
-#     if not question:
-#         return []
-
-#     question = question.strip()
-
-#     if not question:
-#         return []
-
-#     # =====================================================
-#     # QUERY ANALYSIS
-#     # =====================================================
-
-#     keywords = get_keywords(question)
-
-#     intents = detect_intents(question)
-
-#     question_type = detect_question_type(
-#         intents
-#     )
-
-#     # =====================================================
-#     # EMBEDDING
-#     # =====================================================
-
-#     response = client.embeddings.create(
-#         model="text-embedding-3-small",
-#         input=question
-#     )
-
-#     question_embedding = (
-#         response.data[0].embedding
-#     )
-
-#     # =====================================================
-#     # SEMANTIC CANDIDATES
-#     # =====================================================
-
-#     semantic_articles = list(
-#         Article.objects
-#         .select_related("law")
-#         .exclude(embedding=None)
-#         .annotate(
-#             distance=CosineDistance(
-#                 "embedding",
-#                 question_embedding
-#             )
-#         )
-#         .order_by("distance")[:20]
-#     )
-
-#     # =====================================================
-#     # CONTEXT CANDIDATES
-#     # =====================================================
-
-#     context_articles = get_context_articles(
-#         intents
-#     )
-
-#     # =====================================================
-#     # MERGE
-#     # =====================================================
-
-#     candidate_map = {}
-
-#     for article in semantic_articles:
-#         candidate_map[article.id] = article
-
-#     for article in context_articles:
-#         candidate_map[article.id] = article
-
-#     articles = list(
-#         candidate_map.values()
-#     )
-
-#     # =====================================================
-#     # SCORE
-#     # =====================================================
-
-#     scored_articles = []
-
-#     for article in articles:
-
-#         title = normalize_text(
-#             article.title or ""
-#         )
-
-#         content = normalize_text(
-#             article.content or ""
-#         )
-
-#         # -------------------------------------------------
-#         # SEMANTIC
-#         # -------------------------------------------------
-
-#         if hasattr(article, "distance"):
-
-#             semantic_score = max(
-#                 0,
-#                 1 - float(article.distance)
-#             )
-
-#         else:
-#             semantic_score = 0
-
-#         score = semantic_score * 50
-
-#         matched_keywords = 0
-
-#         # -------------------------------------------------
-#         # KEYWORDS
-#         # -------------------------------------------------
-
-#         for keyword in keywords:
-
-#             match = keyword_matches(
-#                 keyword,
-#                 title,
-#                 content
-#             )
-
-#             if match == "title":
-
-#                 score += 20
-#                 matched_keywords += 1
-
-#             elif match == "content":
-
-#                 score += 4
-#                 matched_keywords += 1
-
-#             elif match == "related_title":
-
-#                 score += 10
-#                 matched_keywords += 1
-
-#             elif match == "related_content":
-
-#                 score += 2
-#                 matched_keywords += 1
-
-#         # -------------------------------------------------
-#         # RELATION
-#         # -------------------------------------------------
-
-#         relation_score = calculate_relation_score(
-#             article,
-#             intents
-#         )
-
-#         score += relation_score
-
-#         # -------------------------------------------------
-#         # CONTEXT
-#         # -------------------------------------------------
-
-#         context_score = calculate_context_score(
-#             article,
-#             intents
-#         )
-
-#         score += context_score
-
-#         # -------------------------------------------------
-#         # DIRECT CONTEXT
-#         # -------------------------------------------------
-
-#         if is_direct_context_article(
-#             article,
-#             intents
-#         ):
-#             score += 150
-
-#         # -------------------------------------------------
-#         # ARTICLE ROLE
-#         # -------------------------------------------------
-
-#         article_role = detect_article_role(
-#             article,
-#             intents
-#         )
-
-#         if article_role == "primary":
-#             score += 200
-
-#         elif article_role == "companion":
-#             score += 100
-
-#         # =================================================
-#         # QUESTION TYPE
-#         # =================================================
-
-#         # -------------------------------------------------
-#         # TOPLANIŞ + EHTİYAT + AİLƏ
-#         # -------------------------------------------------
-
-#         if question_type == "toplanis_ehtiyat_aile":
-
-#             # Ehtiyat + toplanış
-#             if (
-#                 "ehtiyat" in title
-#                 and (
-#                     "toplanis" in title
-#                     or "telim" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 score += 300
-
-#             # Toplanışdan azadolma
-#             if (
-#                 "toplanis" in title
-#                 and "azad" in title
-#             ):
-#                 score += 250
-
-#             # Ailə üzrə maddə
-#             if (
-#                 "aile" in title
-#                 and (
-#                     "mohlet" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 score += 200
-
-#         # -------------------------------------------------
-#         # TOPLANIŞ + EHTİYAT
-#         # -------------------------------------------------
-
-#         elif question_type == "toplanis_ehtiyat":
-
-#             if (
-#                 "ehtiyat" in title
-#                 and (
-#                     "toplanis" in title
-#                     or "telim" in title
-#                     or "cagiris" in title
-#                 )
-#             ):
-#                 score += 300
-
-#             elif "toplanis" in title:
-#                 score += 150
-
-#         # -------------------------------------------------
-#         # TOPLANIŞ + AZADOLMA
-#         # -------------------------------------------------
-
-#         elif question_type == "toplanis_azadetme":
-
-#             if (
-#                 "toplanis" in title
-#                 and "azad" in title
-#             ):
-#                 score += 250
-
-#             if "aile" in intents:
-
-#                 if (
-#                     "aile" in title
-#                     and "mohlet" in title
-#                 ):
-#                     score += 150
-
-#             if "saglamliq" in intents:
-
-#                 if (
-#                     "saglamliq" in title
-#                     and "mohlet" in title
-#                 ):
-#                     score += 150
-
-#             if "tehsil" in intents:
-
-#                 if (
-#                     "tehsil" in title
-#                     and "mohlet" in title
-#                 ):
-#                     score += 150
-
-#         # -------------------------------------------------
-#         # MÖHLƏT
-#         # -------------------------------------------------
-
-#         elif question_type == "mohlet":
-
-#             if "mohlet" in title:
-#                 score += 150
-
-#         # -------------------------------------------------
-#         # AİLƏ + MÖHLƏT
-#         # -------------------------------------------------
-
-#         elif question_type == "aile_mohlet":
-
-#             if (
-#                 "aile" in title
-#                 and "mohlet" in title
-#             ):
-#                 score += 200
-
-#         # -------------------------------------------------
-#         # SAĞLAMLIQ + MÖHLƏT
-#         # -------------------------------------------------
-
-#         elif question_type == "saglamliq_mohlet":
-
-#             if (
-#                 "saglamliq" in title
-#                 and "mohlet" in title
-#             ):
-#                 score += 200
-
-#         # -------------------------------------------------
-#         # TƏHSİL + MÖHLƏT
-#         # -------------------------------------------------
-
-#         elif question_type == "tehsil_mohlet":
-
-#             if (
-#                 "tehsil" in title
-#                 and "mohlet" in title
-#             ):
-#                 score += 200
-
-#         # -------------------------------------------------
-#         # RESULT
-#         # -------------------------------------------------
-
-#         scored_articles.append(
-#             {
-#                 "article": article,
-#                 "score": score,
-#                 "semantic_score": semantic_score,
-#                 "matched_keywords": matched_keywords,
-#                 "relation_score": relation_score,
-#                 "context_score": context_score,
-#                 "article_role": article_role,
-#             }
-#         )
-
-#     # =====================================================
-#     # SORT
-#     # =====================================================
-
-#     scored_articles.sort(
-#         key=lambda item: (
-#             item["score"],
-#             item["relation_score"],
-#             item["context_score"],
-#             item["matched_keywords"],
-#             item["semantic_score"],
-#         ),
-#         reverse=True
-#     )
-
-#     # =====================================================
-#     # DEBUG
-#     # =====================================================
-
-#     print(
-#         "\n================ SEARCH DEBUG ================"
-#     )
-
-#     print(
-#         f"QUESTION: {question}"
-#     )
-
-#     print(
-#         f"KEYWORDS: {keywords}"
-#     )
-
-#     print(
-#         f"INTENTS: {intents}"
-#     )
-
-#     print(
-#         f"QUESTION TYPE: {question_type}"
-#     )
-
-#     print(
-#         "\nTOP RESULTS:"
-#     )
-
-#     for index, item in enumerate(
-#         scored_articles[:limit],
-#         start=1
-#     ):
-
-#         article = item["article"]
-
-#         print(
-#             f"{index}. "
-#             f"Maddə {article.number} | "
-#             f"Score={item['score']:.2f} | "
-#             f"Semantic={item['semantic_score']:.4f} | "
-#             f"Keywords={item['matched_keywords']} | "
-#             f"Relation={item['relation_score']} | "
-#             f"Context={item['context_score']} | "
-#             f"Role={item['article_role']} | "
-#             f"{article.title}"
-#         )
-
-#     print(
-#         "==============================================\n"
-#     )
-
-#     # =====================================================
-#     # RETURN
-#     # =====================================================
-
-#     results = []
-
-#     seen_ids = set()
-
-#     for item in scored_articles:
-
-#         article = item["article"]
-
-#         if article.id in seen_ids:
-#             continue
-
-#         seen_ids.add(article.id)
-
-#         results.append(article)
-
-#         if len(results) >= limit:
-#             break
-
-#     return results
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 import re
 from collections import defaultdict
 
@@ -2057,6 +58,9 @@ CONTENT_KEYWORD_SCORE = 4
 PHRASE_TITLE_SCORE = 28
 PHRASE_CONTENT_SCORE = 10
 
+# Vacib hüquqi phrase başlıqda keçirsə əlavə güclü bonus
+IMPORTANT_TITLE_PHRASE_SCORE = 70
+
 CONCEPT_TITLE_SCORE = 18
 CONCEPT_CONTENT_SCORE = 6
 
@@ -2075,6 +79,12 @@ PARTIAL_INTENT_BONUS = 12
 
 STRONG_LEXICAL_BONUS = 18
 MEDIUM_LEXICAL_BONUS = 8
+
+# Xüsusi olaraq "müddətli" / "müddətdən artıq"
+DISTINCTIVE_PHRASE_BONUS = 55
+
+# Query-də olan hüquqi phrase başlıqda varsa
+LEGAL_TITLE_MATCH_BONUS = 35
 
 
 # =========================================================
@@ -2367,6 +377,7 @@ INTENT_PRIMARY_TERMS = {
 
     "cagiris": [
         "cagiris",
+        "cagiril",
     ],
 
     "azadetme": [
@@ -2520,10 +531,6 @@ def tokenize(text):
 def normalize_word_for_intent(word):
     """
     Sadə Azərbaycan dilində şəkilçi tolerantlığı.
-    Məs:
-        usaglar -> usag
-        aileye -> aile
-        mohletden -> mohlet
     """
 
     word = normalize_text(word)
@@ -2532,6 +539,7 @@ def normalize_word_for_intent(word):
         return ""
 
     suffixes = [
+        # cəm + hallanma
         "larin",
         "lerin",
 
@@ -2544,13 +552,12 @@ def normalize_word_for_intent(word):
         "lar",
         "ler",
 
+        # hal şəkilçiləri
         "dan",
         "den",
 
         "nin",
-        "nın",
         "nun",
-        "nün",
 
         "na",
         "ne",
@@ -2565,24 +572,17 @@ def normalize_word_for_intent(word):
         "ye",
 
         "ni",
-        "nı",
         "nu",
-        "nü",
 
         "in",
-        "ın",
         "un",
-        "ün",
 
         "im",
-        "ım",
         "um",
-        "üm",
 
+        # tək sait şəkilçiləri
         "i",
-        "ı",
         "u",
-        "ü",
 
         "a",
         "e",
@@ -2593,6 +593,7 @@ def normalize_word_for_intent(word):
         key=len,
         reverse=True,
     ):
+
         if (
             word.endswith(suffix)
             and len(word) - len(suffix) >= 4
@@ -2601,6 +602,70 @@ def normalize_word_for_intent(word):
             break
 
     return word
+
+
+# =========================================================
+# WORD MATCH
+# =========================================================
+
+def word_matches_text(
+    text,
+    word,
+):
+    """
+    Sözün həm də şəkilçili formalarını
+    tolerant şəkildə yoxlayır.
+
+    Məs:
+        cagirilir
+        cagirilmasi
+        cagirilacaq
+    """
+
+    if not text or not word:
+        return False
+
+    text = normalize_text(text)
+    word = normalize_text(word)
+
+    if len(word) < 3:
+        return False
+
+    # Exact
+    if contains_word(text, word):
+        return True
+
+    # Intent-style normalized form
+    base = normalize_word_for_intent(word)
+
+    if base and len(base) >= 4:
+
+        text_tokens = tokenize(text)
+
+        for token in text_tokens:
+
+            token_base = normalize_word_for_intent(
+                token
+            )
+
+            if (
+                token_base == base
+                or token.startswith(base)
+                or base.startswith(token_base)
+            ):
+                return True
+
+    # Prefix tolerant matching
+    if len(word) >= 6:
+
+        prefix = word[:6]
+
+        for token in tokenize(text):
+
+            if token.startswith(prefix):
+                return True
+
+    return False
 
 
 # =========================================================
@@ -2683,6 +748,27 @@ def detect_intents(question):
 
             if base_word in normalized_tokens.values():
                 detected.add(intent)
+                break
+
+            # ---------------------------------------------
+            # Additional tolerant matching
+            # ---------------------------------------------
+
+            for token in tokens:
+
+                token_base = normalize_word_for_intent(
+                    token
+                )
+
+                if (
+                    token_base == base_word
+                    or token.startswith(base_word)
+                    or base_word.startswith(token_base)
+                ):
+                    detected.add(intent)
+                    break
+
+            if intent in detected:
                 break
 
     # ---------------------------------------------
@@ -2803,6 +889,16 @@ IMPORTANT_PHRASES = [
 ]
 
 
+# =========================================================
+# DISTINCTIVE LEGAL PHRASES
+# =========================================================
+
+DISTINCTIVE_LEGAL_PHRASES = {
+    "muddetli heqiqi herbi xidmet",
+    "muddetden artiq heqiqi herbi xidmet",
+}
+
+
 def extract_query_phrases(question):
 
     normalized = normalize_text(question)
@@ -2821,7 +917,7 @@ def extract_query_phrases(question):
             phrases.append(pattern)
 
     # ---------------------------------------------
-    # Dynamic 3-word / 2-word phrases
+    # Dynamic phrases
     # ---------------------------------------------
 
     words = [
@@ -2860,16 +956,26 @@ def extract_article_numbers(question):
     normalized = normalize_text(question)
 
     patterns = [
+
+        # 12.1 / 12.1.1
         r"\b(\d+\.\d+(?:\.\d+)*)\b",
 
+        # 12-ci maddə
         r"\b(\d+)-ci\s+madd",
-        r"\b(\d+)-cu\s+madd",
-        r"\b(\d+)-cu\s+maddesi",
-        r"\b(\d+)-cü\s+madd",
-        r"\b(\d+)-cı\s+madd",
 
+        # 12-cu maddə
+        r"\b(\d+)-cu\s+madd",
+
+        # 12-cü -> normalization sonrası 12-cu
+        r"\b(\d+)-cu\s+maddesi",
+
+        # 12-cı -> normalization sonrası 12-ci
+        r"\b(\d+)-ci\s+maddesi",
+
+        # 12 maddə
         r"\b(\d+)\s+madd",
 
+        # maddə 12 / madde 12
         r"\bmadd[ae]\s+(\d+(?:\.\d+)*)\b",
     ]
 
@@ -2965,30 +1071,25 @@ def exact_article_search(question):
     if not article_numbers:
         return []
 
-    queryset = base_article_queryset()
+    queryset = (
+        base_article_queryset()
+        .filter(
+            number__in=article_numbers
+        )
+    )
 
     results = []
 
-    for number in article_numbers:
+    for article in queryset:
 
-        articles = (
-            queryset
-            .filter(
-                number__iexact=number
-            )
-            [:EXACT_LIMIT]
-        )
+        results.append({
+            "article": article,
+            "semantic_score": 0.0,
+            "lexical_score": 0.0,
+            "sources": {"exact"},
+        })
 
-        for article in articles:
-
-            results.append({
-                "article": article,
-                "semantic_score": 1.0,
-                "lexical_score": 1.0,
-                "sources": {"exact"},
-            })
-
-    return results
+    return results[:EXACT_LIMIT]
 
 
 # =========================================================
@@ -3068,131 +1169,108 @@ def semantic_search(question):
 # LEXICAL SEARCH
 # =========================================================
 
-def lexical_search(
-    question,
-    keywords,
-    intents,
-):
+def lexical_search(question, keywords, intents):
+    """
+    PostgreSQL full-text lexical search.
+
+    Original Azerbaijani words are used for SearchQuery.
+    Terms are combined with OR so that one non-matching
+    word does not eliminate the whole query.
+    """
+
+    words = re.findall(
+        r"[A-Za-zƏəĞğİiIıÖöŞşÇçÜü0-9.-]+",
+        str(question),
+    )
 
     search_terms = []
 
-    # ---------------------------------------------
-    # User keywords
-    # ---------------------------------------------
+    for word in words:
+        normalized = normalize_text(word)
 
-    for keyword in keywords:
+        if len(normalized) < 3:
+            continue
 
-        keyword = normalize_text(keyword)
+        if normalized in STOP_WORDS:
+            continue
 
-        if (
-            len(keyword) >= 3
-            and keyword not in search_terms
-        ):
-            search_terms.append(keyword)
+        if word not in search_terms:
+            search_terms.append(word)
 
-    # ---------------------------------------------
-    # Intent terms
-    # ---------------------------------------------
-
-    for intent in intents:
-
-        for term in INTENT_PRIMARY_TERMS.get(
-            intent,
-            [],
-        ):
-
-            term = normalize_text(term)
-
-            if (
-                len(term) >= 3
-                and term not in search_terms
-            ):
-                search_terms.append(term)
-
-    search_terms = search_terms[
-        :MAX_QUERY_TERMS
-    ]
+    search_terms = search_terms[:MAX_QUERY_TERMS]
 
     if not search_terms:
         return []
 
-    # ---------------------------------------------
-    # PostgreSQL FTS
-    # ---------------------------------------------
+    # ---------------------------------------------------------
+    # SEARCH VECTOR
+    # ---------------------------------------------------------
 
-    vector = (
-        SearchVector(
-            "title",
-            weight="A",
-        )
-        +
-        SearchVector(
-            "content",
-            weight="B",
-        )
+    search_vector = (
+        SearchVector("title", weight="A")
+        + SearchVector("content", weight="B")
     )
 
-    query = None
+    # ---------------------------------------------------------
+    # OR QUERY
+    # ---------------------------------------------------------
+
+    search_query = None
 
     for term in search_terms:
-
         current = SearchQuery(
             term,
             search_type="websearch",
         )
 
-        if query is None:
-            query = current
+        if search_query is None:
+            search_query = current
         else:
-            query = query | current
+            search_query = search_query | current
+
+    # ---------------------------------------------------------
+    # DATABASE SEARCH
+    # ---------------------------------------------------------
 
     try:
-
         articles = (
             base_article_queryset()
             .annotate(
-                search_vector=vector
+                search_vector=search_vector,
             )
             .annotate(
                 lexical_rank=SearchRank(
                     "search_vector",
-                    query,
+                    search_query,
                 )
             )
             .filter(
-                search_vector=query
+                search_vector=search_query,
             )
             .order_by(
                 "-lexical_rank"
-            )
-            [:LEXICAL_LIMIT]
+            )[:LEXICAL_LIMIT]
         )
 
     except Exception as exc:
-
-        print(
-            f"[LEXICAL SEARCH ERROR] {exc}"
-        )
-
+        print(f"[LEXICAL SEARCH ERROR] {exc}")
         return []
+
+    # ---------------------------------------------------------
+    # RESULTS
+    # ---------------------------------------------------------
 
     results = []
 
     for article in articles:
-
-        rank = float(
-            article.lexical_rank or 0.0
-        )
-
         results.append({
             "article": article,
             "semantic_score": 0.0,
-            "lexical_score": rank,
+            "lexical_score": float(article.lexical_rank or 0.0),
             "sources": {"lexical"},
         })
 
     return results
-
 
 # =========================================================
 # CANDIDATE FUSION
@@ -3292,6 +1370,55 @@ def contains_phrase(text, phrase):
 
 
 # =========================================================
+# DISTINCTIVE PHRASE SCORE
+# =========================================================
+
+def calculate_distinctive_phrase_score(
+    article,
+    question,
+):
+
+    title = normalize_text(
+        article.title or ""
+    )
+
+    content = normalize_text(
+        article.content or ""
+    )
+
+    normalized_question = normalize_text(
+        question
+    )
+
+    score = 0
+    matched = []
+
+    for phrase in DISTINCTIVE_LEGAL_PHRASES:
+
+        phrase = normalize_text(
+            phrase
+        )
+
+        # Query-də phrase varsa
+        if phrase not in normalized_question:
+            continue
+
+        # Başlıqda exact phrase
+        if phrase in title:
+
+            score += DISTINCTIVE_PHRASE_BONUS
+            matched.append(phrase)
+
+        # Məzmununda phrase
+        elif phrase in content:
+
+            score += 15
+            matched.append(phrase)
+
+    return score, matched
+
+
+# =========================================================
 # KEYWORD SCORE
 # =========================================================
 
@@ -3320,7 +1447,7 @@ def calculate_keyword_score(
         if len(keyword) < 3:
             continue
 
-        if contains_word(
+        if word_matches_text(
             title,
             keyword,
         ):
@@ -3328,7 +1455,7 @@ def calculate_keyword_score(
             score += TITLE_KEYWORD_SCORE
             matched += 1
 
-        elif contains_word(
+        elif word_matches_text(
             content,
             keyword,
         ):
@@ -3358,6 +1485,7 @@ def calculate_phrase_score(
 
     score = 0
     matched = 0
+    important_title_matches = 0
 
     for phrase in phrases:
 
@@ -3373,7 +1501,16 @@ def calculate_phrase_score(
             phrase,
         ):
 
-            score += PHRASE_TITLE_SCORE
+            # Vacib hüquqi phrase
+            if phrase in IMPORTANT_PHRASES:
+
+                score += IMPORTANT_TITLE_PHRASE_SCORE
+                important_title_matches += 1
+
+            else:
+
+                score += PHRASE_TITLE_SCORE
+
             matched += 1
 
         elif contains_phrase(
@@ -3384,7 +1521,11 @@ def calculate_phrase_score(
             score += PHRASE_CONTENT_SCORE
             matched += 1
 
-    return score, matched
+    return (
+        score,
+        matched,
+        important_title_matches,
+    )
 
 
 # =========================================================
@@ -3426,15 +1567,17 @@ def calculate_concept_score(
             if " " in word:
 
                 if word in title:
+
                     title_found = True
                     break
 
                 if word in content:
+
                     content_found = True
 
             else:
 
-                if contains_word(
+                if word_matches_text(
                     title,
                     word,
                 ):
@@ -3442,7 +1585,7 @@ def calculate_concept_score(
                     title_found = True
                     break
 
-                if contains_word(
+                if word_matches_text(
                     content,
                     word,
                 ):
@@ -3499,21 +1642,23 @@ def calculate_legal_score(
             if " " in word:
 
                 if word in title:
+
                     title_hit = True
 
                 elif word in content:
+
                     content_hits += 1
 
             else:
 
-                if contains_word(
+                if word_matches_text(
                     title,
                     word,
                 ):
 
                     title_hit = True
 
-                elif contains_word(
+                elif word_matches_text(
                     content,
                     word,
                 ):
@@ -3562,16 +1707,24 @@ def calculate_legal_score(
                         word in title
                         or word in content
                     ):
+
                         intent_found = True
                         break
 
                 else:
 
                     if (
-                        contains_word(title, word)
+                        word_matches_text(
+                            title,
+                            word,
+                        )
                         or
-                        contains_word(content, word)
+                        word_matches_text(
+                            content,
+                            word,
+                        )
                     ):
+
                         intent_found = True
                         break
 
@@ -3645,18 +1798,23 @@ def calculate_source_score(
     score = 0
 
     if "exact" in sources:
+
         score += EXACT_SOURCE_SCORE
 
     if "semantic" in sources:
+
         score += SEMANTIC_SOURCE_SCORE
 
     if "lexical" in sources:
+
         score += LEXICAL_SOURCE_SCORE
 
     if len(sources) >= 2:
+
         score += MULTI_SOURCE_BONUS
 
     if len(sources) >= 3:
+
         score += THREE_SOURCE_BONUS
 
     return score
@@ -3708,12 +1866,12 @@ def calculate_intent_evidence(
             else:
 
                 if (
-                    contains_word(
+                    word_matches_text(
                         title,
                         word,
                     )
                     or
-                    contains_word(
+                    word_matches_text(
                         content,
                         word,
                     )
@@ -3723,6 +1881,47 @@ def calculate_intent_evidence(
                     break
 
     return matched
+
+
+# =========================================================
+# QUERY-TITLE DISTINCTION
+# =========================================================
+
+def calculate_query_title_match(
+    article,
+    analysis,
+):
+
+    title = normalize_text(
+        article.title or ""
+    )
+
+    normalized_query = analysis[
+        "normalized"
+    ]
+
+    score = 0
+
+    matched = []
+
+    # ---------------------------------------------
+    # Important phrase title match
+    # ---------------------------------------------
+
+    for phrase in IMPORTANT_PHRASES:
+
+        phrase = normalize_text(
+            phrase
+        )
+
+        if phrase in normalized_query:
+
+            if phrase in title:
+
+                score += LEGAL_TITLE_MATCH_BONUS
+                matched.append(phrase)
+
+    return score, matched
 
 
 # =========================================================
@@ -3794,11 +1993,13 @@ def rerank_candidates(
             )
         )
 
-        phrase_points, matched_phrases = (
-            calculate_phrase_score(
-                article,
-                phrases,
-            )
+        (
+            phrase_points,
+            matched_phrases,
+            important_title_matches,
+        ) = calculate_phrase_score(
+            article,
+            phrases,
         )
 
         concept_points = (
@@ -3825,6 +2026,20 @@ def rerank_candidates(
         source_points = (
             calculate_source_score(
                 sources
+            )
+        )
+
+        distinctive_points, distinctive_matches = (
+            calculate_distinctive_phrase_score(
+                article,
+                analysis["normalized"],
+            )
+        )
+
+        query_title_points, query_title_matches = (
+            calculate_query_title_match(
+                article,
+                analysis,
             )
         )
 
@@ -3929,6 +2144,8 @@ def rerank_candidates(
             + keyword_bonus
             + phrase_bonus
             + lexical_bonus
+            + distinctive_points
+            + query_title_points
         )
 
         ranked.append({
@@ -3973,11 +2190,26 @@ def rerank_candidates(
             "lexical_bonus":
                 lexical_bonus,
 
+            "distinctive_phrase_score":
+                distinctive_points,
+
+            "query_title_score":
+                query_title_points,
+
             "matched_keywords":
                 matched_keywords,
 
             "matched_phrases":
                 matched_phrases,
+
+            "important_title_matches":
+                important_title_matches,
+
+            "distinctive_matches":
+                distinctive_matches,
+
+            "query_title_matches":
+                query_title_matches,
 
             "intent_evidence":
                 intent_evidence,
@@ -3994,10 +2226,12 @@ def rerank_candidates(
         key=lambda item: (
             "exact" in item["sources"],
             item["score"],
+            item["distinctive_phrase_score"],
+            item["query_title_score"],
+            item["phrase_score"],
             item["semantic_score"],
             item["lexical_score"],
             item["legal_score"],
-            item["phrase_score"],
         ),
         reverse=True,
     )
@@ -4058,6 +2292,16 @@ def evidence_check(
             "intent_evidence"
         ]
 
+        distinctive_phrase_score = item.get(
+            "distinctive_phrase_score",
+            0,
+        )
+
+        query_title_score = item.get(
+            "query_title_score",
+            0,
+        )
+
         # ---------------------------------------------
         # Exact article
         # ---------------------------------------------
@@ -4114,7 +2358,22 @@ def evidence_check(
             or phrase_score >= 10
             or keyword_score >= 14
             or number_score >= 14
+            or distinctive_phrase_score >= 15
+            or query_title_score >= 20
         )
+
+        # ---------------------------------------------
+        # RULE 0
+        # Distinctive legal phrase
+        # ---------------------------------------------
+
+        if (
+            distinctive_phrase_score >= DISTINCTIVE_PHRASE_BONUS
+            and query_title_score >= LEGAL_TITLE_MATCH_BONUS
+        ):
+
+            verified.append(item)
+            continue
 
         # ---------------------------------------------
         # RULE 1
@@ -4263,6 +2522,11 @@ def calculate_confidence(
         "lexical_score"
     ]
 
+    distinctive_phrase_score = top.get(
+        "distinctive_phrase_score",
+        0,
+    )
+
     # ---------------------------------------------
     # High confidence
     # ---------------------------------------------
@@ -4270,22 +2534,28 @@ def calculate_confidence(
     if "exact" in sources:
         return "high"
 
+    if distinctive_phrase_score >= DISTINCTIVE_PHRASE_BONUS:
+        return "high"
+
     if (
         semantic >= STRONG_SEMANTIC
         and legal >= 15
     ):
+
         return "high"
 
     if (
         len(sources) >= 2
         and legal >= 15
     ):
+
         return "high"
 
     if (
         lexical >= 0.20
         and legal >= 15
     ):
+
         return "high"
 
     # ---------------------------------------------
@@ -4298,6 +2568,7 @@ def calculate_confidence(
         or top["concept_score"] >= 18
         or top["phrase_score"] >= 10
     ):
+
         return "medium"
 
     return "low"
@@ -4338,6 +2609,7 @@ def select_diverse_articles(
             law_id is not None
             and seen_laws[law_id] >= 3
         ):
+
             continue
 
         selected.append(article)
@@ -4416,6 +2688,7 @@ def select_final_articles(
                 < 0.05
                 and sources == {"semantic"}
             ):
+
                 continue
 
             selected_items.append(item)
@@ -4459,6 +2732,11 @@ def print_search_debug(
 
     print(
         f"QUESTION: {question}"
+    )
+
+    print(
+        f"NORMALIZED: "
+        f"{analysis['normalized']}"
     )
 
     print(
@@ -4506,7 +2784,7 @@ def print_search_debug(
     )
 
     for index, item in enumerate(
-        ranked[:10],
+        ranked[:5],
         start=1,
     ):
 
@@ -4525,6 +2803,8 @@ def print_search_debug(
             f"Number={item['number_score']} | "
             f"Source={item['source_score']} | "
             f"Intent={item['intent_bonus']} | "
+            f"Distinctive={item.get('distinctive_phrase_score', 0)} | "
+            f"TitleMatch={item.get('query_title_score', 0)} | "
             f"Matched={item['matched_keywords']} | "
             f"Sources={item['sources']} | "
             f"{article.title}"
@@ -4535,7 +2815,7 @@ def print_search_debug(
     )
 
     for index, item in enumerate(
-        verified[:10],
+        verified[:5],
         start=1,
     ):
 
@@ -4548,6 +2828,8 @@ def print_search_debug(
             f"Semantic={item['semantic_score']:.4f} | "
             f"Lexical={item['lexical_score']:.4f} | "
             f"Legal={item['legal_score']} | "
+            f"Distinctive={item.get('distinctive_phrase_score', 0)} | "
+            f"TitleMatch={item.get('query_title_score', 0)} | "
             f"Sources={item['sources']} | "
             f"{article.title}"
         )
@@ -4630,7 +2912,7 @@ def search_articles(
     lexical_results = (
         lexical_search(
             question,
-            analysis["keywords"],
+            analysis["expanded_keywords"],
             analysis["intents"],
         )
     )
