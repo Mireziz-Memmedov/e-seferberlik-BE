@@ -1,5 +1,6 @@
 import re
 from collections import defaultdict
+from functools import lru_cache
 
 from openai import OpenAI
 from django.conf import settings
@@ -464,44 +465,41 @@ QUESTION_TYPE_PRIORITY = [
 # NORMALIZATION
 # =========================================================
 
-def normalize_text(text):
-    """
-    Azərbaycan dilində xüsusi simvolları
-    search üçün sadələşdirir.
-    """
+_NORMALIZE_REPLACEMENTS = str.maketrans({
+    "ə": "e",
+    "ı": "i",
+    "ö": "o",
+    "ü": "u",
+    "ğ": "g",
+    "ş": "s",
+    "ç": "c",
+})
 
+_NORMALIZE_PUNCT_RE = re.compile(
+    r"[“”«»\"'()\[\]\{\}:;,!?]"
+)
+
+_NORMALIZE_SPACE_RE = re.compile(
+    r"\s+"
+)
+
+
+def normalize_text(text):
     if not text:
         return ""
 
     text = str(text).lower().strip()
 
-    replacements = {
-        "ə": "e",
-        "ı": "i",
-        "ö": "o",
-        "ü": "u",
-        "ğ": "g",
-        "ş": "s",
-        "ç": "c",
-    }
+    text = text.translate(
+        _NORMALIZE_REPLACEMENTS
+    )
 
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-
-    text = re.sub(
-        r"[“”«»\"']",
+    text = _NORMALIZE_PUNCT_RE.sub(
         " ",
         text,
     )
 
-    text = re.sub(
-        r"[\(\)\[\]\{\}:;,!?]",
-        " ",
-        text,
-    )
-
-    text = re.sub(
-        r"\s+",
+    text = _NORMALIZE_SPACE_RE.sub(
         " ",
         text,
     )
@@ -513,13 +511,19 @@ def normalize_text(text):
 # TOKENIZATION
 # =========================================================
 
+_TOKEN_RE = re.compile(
+    r"[a-z0-9.-]+"
+)
+
+
 def tokenize(text):
+    if not text:
+        return []
 
     normalized = normalize_text(text)
 
-    return re.findall(
-        r"[a-z0-9.-]+",
-        normalized,
+    return _TOKEN_RE.findall(
+        normalized
     )
 
 
@@ -527,9 +531,47 @@ def tokenize(text):
 # WORD NORMALIZATION
 # =========================================================
 
+_WORD_SUFFIXES = (
+    "larin",
+    "lerin",
+    "lardan",
+    "lerden",
+    "lara",
+    "lere",
+    "lar",
+    "ler",
+    "dan",
+    "den",
+    "nin",
+    "nun",
+    "na",
+    "ne",
+    "da",
+    "de",
+    "ta",
+    "te",
+    "ya",
+    "ye",
+    "ni",
+    "nu",
+    "in",
+    "un",
+    "im",
+    "um",
+    "i",
+    "u",
+    "a",
+    "e",
+)
+
+
+@lru_cache(maxsize=4096)
 def normalize_word_for_intent(word):
     """
     Sadə Azərbaycan dilində şəkilçi tolerantlığı.
+
+    Cache istifadə olunur ki, eyni sözlər
+    yüzlərlə dəfə yenidən hesablanmasın.
     """
 
     word = normalize_text(word)
@@ -537,58 +579,7 @@ def normalize_word_for_intent(word):
     if not word:
         return ""
 
-    suffixes = [
-        "larin",
-        "lerin",
-
-        "lardan",
-        "lerden",
-
-        "lara",
-        "lere",
-
-        "lar",
-        "ler",
-
-        "dan",
-        "den",
-
-        "nin",
-        "nun",
-
-        "na",
-        "ne",
-
-        "da",
-        "de",
-
-        "ta",
-        "te",
-
-        "ya",
-        "ye",
-
-        "ni",
-        "nu",
-
-        "in",
-        "un",
-
-        "im",
-        "um",
-
-        "i",
-        "u",
-
-        "a",
-        "e",
-    ]
-
-    for suffix in sorted(
-        suffixes,
-        key=len,
-        reverse=True,
-    ):
+    for suffix in _WORD_SUFFIXES:
 
         if (
             word.endswith(suffix)
@@ -601,31 +592,95 @@ def normalize_word_for_intent(word):
 
 
 # =========================================================
+# PRECOMPUTED INTENT WORDS
+# =========================================================
+
+NORMALIZED_RELATED_WORDS = {}
+
+for _intent, _words in RELATED_WORDS.items():
+
+    NORMALIZED_RELATED_WORDS[_intent] = tuple(
+        dict.fromkeys(
+            normalize_text(word)
+            for word in _words
+            if normalize_text(word)
+        )
+    )
+
+
+NORMALIZED_INTENT_PRIMARY_TERMS = {
+    intent: tuple(
+        dict.fromkeys(
+            normalize_text(term)
+            for term in terms
+            if normalize_text(term)
+        )
+    )
+    for intent, terms in INTENT_PRIMARY_TERMS.items()
+}
+
+
+# =========================================================
 # WORD MATCH
 # =========================================================
 
 def word_matches_text(
     text,
     word,
+    text_tokens=None,
+    base_tokens=None,
+    normalized=False,
 ):
+    """
+    Mətn daxilində sözün olub-olmadığını yoxlayır.
+
+    Performance:
+    - normalize yalnız lazım olduqda edilir
+    - tokenlər cache-dən gəlir
+    - stem/base tokenlər cache-dən gəlir
+    """
 
     if not text or not word:
         return False
 
-    text = normalize_text(text)
+    if not normalized:
+        text = normalize_text(text)
+
     word = normalize_text(word)
 
     if len(word) < 3:
         return False
 
+    # -----------------------------------------------------
+    # Exact word
+    # -----------------------------------------------------
+
     if contains_word(text, word):
         return True
+
+    # -----------------------------------------------------
+    # Tokens
+    # -----------------------------------------------------
+
+    if text_tokens is None:
+        text_tokens = tokenize(text)
+
+    # -----------------------------------------------------
+    # Stem matching
+    # -----------------------------------------------------
 
     base = normalize_word_for_intent(word)
 
     if base and len(base) >= 4:
 
-        text_tokens = tokenize(text)
+        if base_tokens is None:
+            base_tokens = {
+                normalize_word_for_intent(token)
+                for token in text_tokens
+            }
+
+        if base in base_tokens:
+            return True
 
         for token in text_tokens:
 
@@ -636,15 +691,22 @@ def word_matches_text(
             if (
                 token_base == base
                 or token.startswith(base)
-                or base.startswith(token_base)
+                or (
+                    token_base
+                    and base.startswith(token_base)
+                )
             ):
                 return True
+
+    # -----------------------------------------------------
+    # Prefix fallback
+    # -----------------------------------------------------
 
     if len(word) >= 6:
 
         prefix = word[:6]
 
-        for token in tokenize(text):
+        for token in text_tokens:
 
             if token.startswith(prefix):
                 return True
@@ -681,22 +743,24 @@ def get_keywords(question):
 def detect_intents(question):
 
     normalized = normalize_text(question)
-    tokens = tokenize(question)
+    tokens = tokenize(normalized)
 
     normalized_tokens = {
         token: normalize_word_for_intent(token)
         for token in tokens
     }
 
+    normalized_token_bases = set(
+        normalized_tokens.values()
+    )
+
     detected = set()
 
-    for intent, words in INTENTS.items():
+    for intent, words in NORMALIZED_RELATED_WORDS.items():
 
-        for word in words:
+        for normalized_word in words:
 
-            normalized_word = normalize_text(word)
-
-            if not normalized_word:
+            if len(normalized_word) < 3:
                 continue
 
             # -------------------------------------------------
@@ -720,7 +784,7 @@ def detect_intents(question):
                 break
 
             # -------------------------------------------------
-            # Stem-like matching
+            # Stem
             # -------------------------------------------------
 
             base_word = normalize_word_for_intent(
@@ -730,13 +794,15 @@ def detect_intents(question):
             if not base_word:
                 continue
 
-            if base_word in normalized_tokens.values():
+            if base_word in normalized_token_bases:
                 detected.add(intent)
                 break
 
             # -------------------------------------------------
-            # Additional tolerant matching
+            # Prefix tolerant matching
             # -------------------------------------------------
+
+            found = False
 
             for token in tokens:
 
@@ -747,12 +813,18 @@ def detect_intents(question):
                 if (
                     token_base == base_word
                     or token.startswith(base_word)
-                    or base_word.startswith(token_base)
+                    or (
+                        token_base
+                        and base_word.startswith(
+                            token_base
+                        )
+                    )
                 ):
                     detected.add(intent)
+                    found = True
                     break
 
-            if intent in detected:
+            if found:
                 break
 
     # ---------------------------------------------------------
@@ -816,12 +888,10 @@ def expand_keywords(
 
     for intent in intents:
 
-        for term in INTENT_PRIMARY_TERMS.get(
+        for term in NORMALIZED_INTENT_PRIMARY_TERMS.get(
             intent,
-            [],
+            (),
         ):
-
-            term = normalize_text(term)
 
             if (
                 len(term) >= 3
@@ -865,6 +935,19 @@ IMPORTANT_PHRASES = [
 ]
 
 
+NORMALIZED_IMPORTANT_PHRASES = tuple(
+    dict.fromkeys(
+        normalize_text(phrase)
+        for phrase in IMPORTANT_PHRASES
+    )
+)
+
+
+NORMALIZED_IMPORTANT_PHRASE_SET = set(
+    NORMALIZED_IMPORTANT_PHRASES
+)
+
+
 # =========================================================
 # DISTINCTIVE LEGAL PHRASES
 # =========================================================
@@ -873,6 +956,14 @@ DISTINCTIVE_LEGAL_PHRASES = {
     "muddetli heqiqi herbi xidmet",
     "muddetden artiq heqiqi herbi xidmet",
 }
+
+
+NORMALIZED_DISTINCTIVE_PHRASES = tuple(
+    dict.fromkeys(
+        normalize_text(phrase)
+        for phrase in DISTINCTIVE_LEGAL_PHRASES
+    )
+)
 
 
 # =========================================================
@@ -889,9 +980,7 @@ def extract_query_phrases(question):
     # Important legal phrases
     # ---------------------------------------------------------
 
-    for pattern in IMPORTANT_PHRASES:
-
-        pattern = normalize_text(pattern)
+    for pattern in NORMALIZED_IMPORTANT_PHRASES:
 
         if pattern in normalized:
             phrases.append(pattern)
@@ -902,7 +991,7 @@ def extract_query_phrases(question):
 
     words = [
         word
-        for word in tokenize(question)
+        for word in tokenize(normalized)
         if word not in STOP_WORDS
         and len(word) >= 3
     ]
@@ -937,25 +1026,18 @@ def extract_article_numbers(question):
 
     patterns = [
 
-        # 12.1 / 12.1.1
         r"\b(\d+\.\d+(?:\.\d+)*)\b",
 
-        # 12-ci maddə
         r"\b(\d+)-ci\s+madd",
 
-        # 12-cu maddə
         r"\b(\d+)-cu\s+madd",
 
-        # 12-cü -> normalization sonrası 12-cu
         r"\b(\d+)-cu\s+maddesi",
 
-        # 12-cı -> normalization sonrası 12-ci
         r"\b(\d+)-ci\s+maddesi",
 
-        # 12 maddə
         r"\b(\d+)\s+madd",
 
-        # maddə 12 / madde 12
         r"\bmadd[ae]\s+(\d+(?:\.\d+)*)\b",
     ]
 
@@ -1159,12 +1241,6 @@ def semantic_search(question):
 
 def lexical_search(keywords):
 
-    """
-    PostgreSQL Full-Text Search.
-
-    Burada artıq birbaşa expanded_keywords istifadə olunur.
-    """
-
     search_terms = []
 
     for word in keywords:
@@ -1185,10 +1261,6 @@ def lexical_search(keywords):
     if not search_terms:
         return []
 
-    # ---------------------------------------------------------
-    # SEARCH VECTOR
-    # ---------------------------------------------------------
-
     search_vector = (
         SearchVector(
             "title",
@@ -1200,10 +1272,6 @@ def lexical_search(keywords):
             weight="B",
         )
     )
-
-    # ---------------------------------------------------------
-    # OR QUERY
-    # ---------------------------------------------------------
 
     search_query = None
 
@@ -1223,10 +1291,6 @@ def lexical_search(keywords):
             search_query = (
                 search_query | current
             )
-
-    # ---------------------------------------------------------
-    # DATABASE SEARCH
-    # ---------------------------------------------------------
 
     try:
 
@@ -1257,10 +1321,6 @@ def lexical_search(keywords):
         )
 
         return []
-
-    # ---------------------------------------------------------
-    # RESULTS
-    # ---------------------------------------------------------
 
     results = []
 
@@ -1376,426 +1436,10 @@ def contains_phrase(text, phrase):
 
 
 # =========================================================
-# DISTINCTIVE PHRASE SCORE
-# =========================================================
-
-def calculate_distinctive_phrase_score(
-    article,
-    question,
-):
-
-    title = normalize_text(
-        article.title or ""
-    )
-
-    content = normalize_text(
-        article.content or ""
-    )
-
-    normalized_question = normalize_text(
-        question
-    )
-
-    score = 0
-    matched = []
-
-    for phrase in DISTINCTIVE_LEGAL_PHRASES:
-
-        phrase = normalize_text(
-            phrase
-        )
-
-        if phrase not in normalized_question:
-            continue
-
-        if phrase in title:
-
-            score += DISTINCTIVE_PHRASE_BONUS
-            matched.append(phrase)
-
-        elif phrase in content:
-
-            score += 15
-            matched.append(phrase)
-
-    return score, matched
-
-
-# =========================================================
-# KEYWORD SCORE
-# =========================================================
-
-def calculate_keyword_score(
-    article,
-    keywords,
-):
-
-    title = normalize_text(
-        article.title or ""
-    )
-
-    content = normalize_text(
-        article.content or ""
-    )
-
-    score = 0
-    matched = 0
-
-    for keyword in keywords:
-
-        keyword = normalize_text(
-            keyword
-        )
-
-        if len(keyword) < 3:
-            continue
-
-        if word_matches_text(
-            title,
-            keyword,
-        ):
-
-            score += TITLE_KEYWORD_SCORE
-            matched += 1
-
-        elif word_matches_text(
-            content,
-            keyword,
-        ):
-
-            score += CONTENT_KEYWORD_SCORE
-            matched += 1
-
-    return score, matched
-
-
-# =========================================================
-# PHRASE SCORE
-# =========================================================
-
-def calculate_phrase_score(
-    article,
-    phrases,
-):
-
-    title = normalize_text(
-        article.title or ""
-    )
-
-    content = normalize_text(
-        article.content or ""
-    )
-
-    score = 0
-    matched = 0
-    important_title_matches = 0
-
-    for phrase in phrases:
-
-        phrase = normalize_text(
-            phrase
-        )
-
-        if len(phrase) < 5:
-            continue
-
-        if contains_phrase(
-            title,
-            phrase,
-        ):
-
-            if phrase in IMPORTANT_PHRASES:
-
-                score += IMPORTANT_TITLE_PHRASE_SCORE
-                important_title_matches += 1
-
-            else:
-
-                score += PHRASE_TITLE_SCORE
-
-            matched += 1
-
-        elif contains_phrase(
-            content,
-            phrase,
-        ):
-
-            score += PHRASE_CONTENT_SCORE
-            matched += 1
-
-    return (
-        score,
-        matched,
-        important_title_matches,
-    )
-
-
-# =========================================================
-# CONCEPT SCORE
-# =========================================================
-
-def calculate_concept_score(
-    article,
-    intents,
-):
-
-    title = normalize_text(
-        article.title or ""
-    )
-
-    content = normalize_text(
-        article.content or ""
-    )
-
-    score = 0
-
-    for intent in intents:
-
-        related_words = RELATED_WORDS.get(
-            intent,
-            set(),
-        )
-
-        title_found = False
-        content_found = False
-
-        for word in related_words:
-
-            word = normalize_text(word)
-
-            if len(word) < 3:
-                continue
-
-            if " " in word:
-
-                if word in title:
-
-                    title_found = True
-                    break
-
-                if word in content:
-
-                    content_found = True
-
-            else:
-
-                if word_matches_text(
-                    title,
-                    word,
-                ):
-
-                    title_found = True
-                    break
-
-                if word_matches_text(
-                    content,
-                    word,
-                ):
-
-                    content_found = True
-
-        if title_found:
-
-            score += CONCEPT_TITLE_SCORE
-
-        elif content_found:
-
-            score += CONCEPT_CONTENT_SCORE
-
-    return score
-
-
-# =========================================================
-# LEGAL SCORE
-# =========================================================
-
-def calculate_legal_score(
-    article,
-    intents,
-):
-
-    title = normalize_text(
-        article.title or ""
-    )
-
-    content = normalize_text(
-        article.content or ""
-    )
-
-    score = 0
-
-    for intent in intents:
-
-        related_words = RELATED_WORDS.get(
-            intent,
-            set(),
-        )
-
-        title_hit = False
-        content_hits = 0
-
-        for word in related_words:
-
-            word = normalize_text(word)
-
-            if len(word) < 3:
-                continue
-
-            if " " in word:
-
-                if word in title:
-
-                    title_hit = True
-
-                elif word in content:
-
-                    content_hits += 1
-
-            else:
-
-                if word_matches_text(
-                    title,
-                    word,
-                ):
-
-                    title_hit = True
-
-                elif word_matches_text(
-                    content,
-                    word,
-                ):
-
-                    content_hits += 1
-
-        if title_hit:
-
-            score += 20
-
-        elif content_hits >= 3:
-
-            score += 10
-
-        elif content_hits >= 1:
-
-            score += 4
-
-    # ---------------------------------------------------------
-    # Multiple intent agreement
-    # ---------------------------------------------------------
-
-    if len(intents) >= 2:
-
-        covered = 0
-
-        for intent in intents:
-
-            related_words = RELATED_WORDS.get(
-                intent,
-                set(),
-            )
-
-            intent_found = False
-
-            for word in related_words:
-
-                word = normalize_text(word)
-
-                if len(word) < 3:
-                    continue
-
-                if " " in word:
-
-                    if (
-                        word in title
-                        or word in content
-                    ):
-
-                        intent_found = True
-                        break
-
-                else:
-
-                    if (
-                        word_matches_text(
-                            title,
-                            word,
-                        )
-                        or
-                        word_matches_text(
-                            content,
-                            word,
-                        )
-                    ):
-
-                        intent_found = True
-                        break
-
-            if intent_found:
-                covered += 1
-
-        if covered == len(intents):
-
-            score += 25
-
-        elif covered >= 2:
-
-            score += 10
-
-    return score
-
-
-# =========================================================
-# NUMBER SCORE
-# =========================================================
-
-def calculate_number_score(
-    article,
-    numbers,
-):
-
-    if not numbers:
-        return 0
-
-    title = normalize_text(
-        article.title or ""
-    )
-
-    content = normalize_text(
-        article.content or ""
-    )
-
-    score = 0
-
-    for number in numbers:
-
-        pattern = (
-            rf"\b{re.escape(number)}\b"
-        )
-
-        if re.search(
-            pattern,
-            title,
-        ):
-
-            score += NUMBER_TITLE_SCORE
-
-        elif re.search(
-            pattern,
-            content,
-        ):
-
-            score += NUMBER_CONTENT_SCORE
-
-    return score
-
-
-# =========================================================
 # SOURCE SCORE
 # =========================================================
 
-def calculate_source_score(
-    sources,
-):
+def calculate_source_score(sources):
 
     score = 0
 
@@ -1815,105 +1459,6 @@ def calculate_source_score(
         score += THREE_SOURCE_BONUS
 
     return score
-
-
-# =========================================================
-# INTENT EVIDENCE
-# =========================================================
-
-def calculate_intent_evidence(
-    article,
-    intents,
-):
-
-    title = normalize_text(
-        article.title or ""
-    )
-
-    content = normalize_text(
-        article.content or ""
-    )
-
-    matched = set()
-
-    for intent in intents:
-
-        related_words = RELATED_WORDS.get(
-            intent,
-            set(),
-        )
-
-        for word in related_words:
-
-            word = normalize_text(word)
-
-            if len(word) < 3:
-                continue
-
-            if " " in word:
-
-                if (
-                    word in title
-                    or word in content
-                ):
-
-                    matched.add(intent)
-                    break
-
-            else:
-
-                if (
-                    word_matches_text(
-                        title,
-                        word,
-                    )
-                    or
-                    word_matches_text(
-                        content,
-                        word,
-                    )
-                ):
-
-                    matched.add(intent)
-                    break
-
-    return matched
-
-
-# =========================================================
-# QUERY-TITLE MATCH
-# =========================================================
-
-def calculate_query_title_match(
-    article,
-    analysis,
-):
-
-    title = normalize_text(
-        article.title or ""
-    )
-
-    normalized_query = analysis[
-        "normalized"
-    ]
-
-    score = 0
-    matched = []
-
-    for phrase in IMPORTANT_PHRASES:
-
-        phrase = normalize_text(
-            phrase
-        )
-
-        if phrase in normalized_query:
-
-            if phrase in title:
-
-                score += LEGAL_TITLE_MATCH_BONUS
-                matched.append(phrase)
-
-    return score, matched
 
 
 # =========================================================
@@ -1941,7 +1486,35 @@ def rerank_candidates(
         "numbers"
     ]
 
+    normalized_question = analysis[
+        "normalized"
+    ]
+
     ranked = []
+
+    # -----------------------------------------------------
+    # Pre-normalize query data
+    # -----------------------------------------------------
+
+    normalized_keywords = tuple(
+        dict.fromkeys(
+            normalize_text(keyword)
+            for keyword in keywords
+            if len(normalize_text(keyword)) >= 3
+        )
+    )
+
+    normalized_phrases = tuple(
+        dict.fromkeys(
+            normalize_text(phrase)
+            for phrase in phrases
+            if len(normalize_text(phrase)) >= 5
+        )
+    )
+
+    # -----------------------------------------------------
+    # Candidate loop
+    # -----------------------------------------------------
 
     for item in candidates:
 
@@ -1963,9 +1536,41 @@ def rerank_candidates(
 
         sources = item["sources"]
 
-        # -----------------------------------------------------
-        # Base scores
-        # -----------------------------------------------------
+        # =================================================
+        # ARTICLE TEXT CACHE
+        # =================================================
+
+        normalized_title = normalize_text(
+            article.title or ""
+        )
+
+        normalized_content = normalize_text(
+            article.content or ""
+        )
+
+        title_tokens = set(
+            tokenize(normalized_title)
+        )
+
+        content_tokens = set(
+            tokenize(normalized_content)
+        )
+
+        title_base_tokens = {
+            normalize_word_for_intent(token)
+            for token in title_tokens
+            if normalize_word_for_intent(token)
+        }
+
+        content_base_tokens = {
+            normalize_word_for_intent(token)
+            for token in content_tokens
+            if normalize_word_for_intent(token)
+        }
+
+        # =================================================
+        # BASE SCORES
+        # =================================================
 
         semantic_points = (
             semantic_score
@@ -1978,42 +1583,329 @@ def rerank_candidates(
             35,
         )
 
-        keyword_points, matched_keywords = (
-            calculate_keyword_score(
-                article,
-                keywords,
-            )
-        )
+        # =================================================
+        # KEYWORD SCORE
+        # =================================================
 
-        (
-            phrase_points,
-            matched_phrases,
-            important_title_matches,
-        ) = calculate_phrase_score(
-            article,
-            phrases,
-        )
+        keyword_points = 0
+        matched_keywords = 0
 
-        concept_points = (
-            calculate_concept_score(
-                article,
-                intents,
-            )
-        )
+        for keyword in normalized_keywords:
 
-        legal_points = (
-            calculate_legal_score(
-                article,
-                intents,
-            )
-        )
+            if word_matches_text(
+                normalized_title,
+                keyword,
+                text_tokens=title_tokens,
+                base_tokens=title_base_tokens,
+                normalized=True,
+            ):
 
-        number_points = (
-            calculate_number_score(
-                article,
-                numbers,
+                keyword_points += (
+                    TITLE_KEYWORD_SCORE
+                )
+
+                matched_keywords += 1
+
+            elif word_matches_text(
+                normalized_content,
+                keyword,
+                text_tokens=content_tokens,
+                base_tokens=content_base_tokens,
+                normalized=True,
+            ):
+
+                keyword_points += (
+                    CONTENT_KEYWORD_SCORE
+                )
+
+                matched_keywords += 1
+
+        # =================================================
+        # PHRASE SCORE
+        # =================================================
+
+        phrase_points = 0
+        matched_phrases = 0
+        important_title_matches = 0
+
+        for phrase in normalized_phrases:
+
+            if phrase in normalized_title:
+
+                if (
+                    phrase
+                    in NORMALIZED_IMPORTANT_PHRASE_SET
+                ):
+
+                    phrase_points += (
+                        IMPORTANT_TITLE_PHRASE_SCORE
+                    )
+
+                    important_title_matches += 1
+
+                else:
+
+                    phrase_points += (
+                        PHRASE_TITLE_SCORE
+                    )
+
+                matched_phrases += 1
+
+            elif phrase in normalized_content:
+
+                phrase_points += (
+                    PHRASE_CONTENT_SCORE
+                )
+
+                matched_phrases += 1
+
+        # =================================================
+        # CONCEPT SCORE
+        # =================================================
+
+        concept_points = 0
+
+        for intent in intents:
+
+            related_words = (
+                NORMALIZED_RELATED_WORDS.get(
+                    intent,
+                    (),
+                )
             )
-        )
+
+            title_found = False
+            content_found = False
+
+            for word in related_words:
+
+                if len(word) < 3:
+                    continue
+
+                if " " in word:
+
+                    if word in normalized_title:
+
+                        title_found = True
+                        break
+
+                    if word in normalized_content:
+
+                        content_found = True
+
+                else:
+
+                    if word_matches_text(
+                        normalized_title,
+                        word,
+                        text_tokens=title_tokens,
+                        base_tokens=title_base_tokens,
+                        normalized=True,
+                    ):
+
+                        title_found = True
+                        break
+
+                    if word_matches_text(
+                        normalized_content,
+                        word,
+                        text_tokens=content_tokens,
+                        base_tokens=content_base_tokens,
+                        normalized=True,
+                    ):
+
+                        content_found = True
+
+            if title_found:
+
+                concept_points += (
+                    CONCEPT_TITLE_SCORE
+                )
+
+            elif content_found:
+
+                concept_points += (
+                    CONCEPT_CONTENT_SCORE
+                )
+
+        # =================================================
+        # LEGAL SCORE
+        # =================================================
+
+        legal_points = 0
+
+        intent_coverage = set()
+
+        for intent in intents:
+
+            related_words = (
+                NORMALIZED_RELATED_WORDS.get(
+                    intent,
+                    (),
+                )
+            )
+
+            title_hit = False
+            content_hits = 0
+
+            for word in related_words:
+
+                if len(word) < 3:
+                    continue
+
+                if " " in word:
+
+                    if word in normalized_title:
+
+                        title_hit = True
+
+                    elif word in normalized_content:
+
+                        content_hits += 1
+
+                else:
+
+                    if word_matches_text(
+                        normalized_title,
+                        word,
+                        text_tokens=title_tokens,
+                        base_tokens=title_base_tokens,
+                        normalized=True,
+                    ):
+
+                        title_hit = True
+
+                    elif word_matches_text(
+                        normalized_content,
+                        word,
+                        text_tokens=content_tokens,
+                        base_tokens=content_base_tokens,
+                        normalized=True,
+                    ):
+
+                        content_hits += 1
+
+            if title_hit:
+
+                legal_points += 20
+                intent_coverage.add(intent)
+
+            elif content_hits >= 3:
+
+                legal_points += 10
+                intent_coverage.add(intent)
+
+            elif content_hits >= 1:
+
+                legal_points += 4
+                intent_coverage.add(intent)
+
+        # -------------------------------------------------
+        # Multiple intent agreement
+        # -------------------------------------------------
+
+        if len(intents) >= 2:
+
+            covered = 0
+
+            for intent in intents:
+
+                if intent in intent_coverage:
+
+                    covered += 1
+                    continue
+
+                related_words = (
+                    NORMALIZED_RELATED_WORDS.get(
+                        intent,
+                        (),
+                    )
+                )
+
+                intent_found = False
+
+                for word in related_words:
+
+                    if len(word) < 3:
+                        continue
+
+                    if " " in word:
+
+                        if (
+                            word in normalized_title
+                            or word in normalized_content
+                        ):
+
+                            intent_found = True
+                            break
+
+                    else:
+
+                        if (
+                            word_matches_text(
+                                normalized_title,
+                                word,
+                                text_tokens=title_tokens,
+                                base_tokens=title_base_tokens,
+                                normalized=True,
+                            )
+                            or
+                            word_matches_text(
+                                normalized_content,
+                                word,
+                                text_tokens=content_tokens,
+                                base_tokens=content_base_tokens,
+                                normalized=True,
+                            )
+                        ):
+
+                            intent_found = True
+                            break
+
+                if intent_found:
+                    covered += 1
+
+            if covered == len(intents):
+
+                legal_points += 25
+
+            elif covered >= 2:
+
+                legal_points += 10
+
+        # =================================================
+        # NUMBER SCORE
+        # =================================================
+
+        number_points = 0
+
+        for number in numbers:
+
+            pattern = (
+                rf"\b{re.escape(number)}\b"
+            )
+
+            if re.search(
+                pattern,
+                normalized_title,
+            ):
+
+                number_points += (
+                    NUMBER_TITLE_SCORE
+                )
+
+            elif re.search(
+                pattern,
+                normalized_content,
+            ):
+
+                number_points += (
+                    NUMBER_CONTENT_SCORE
+                )
+
+        # =================================================
+        # SOURCE SCORE
+        # =================================================
 
         source_points = (
             calculate_source_score(
@@ -2021,32 +1913,125 @@ def rerank_candidates(
             )
         )
 
-        (
-            distinctive_points,
-            distinctive_matches,
-        ) = calculate_distinctive_phrase_score(
-            article,
-            analysis["normalized"],
-        )
+        # =================================================
+        # DISTINCTIVE PHRASE
+        # =================================================
 
-        (
-            query_title_points,
-            query_title_matches,
-        ) = calculate_query_title_match(
-            article,
-            analysis,
-        )
+        distinctive_points = 0
+        distinctive_matches = []
 
-        # -----------------------------------------------------
-        # Intent evidence
-        # -----------------------------------------------------
+        for phrase in NORMALIZED_DISTINCTIVE_PHRASES:
 
-        intent_evidence = (
-            calculate_intent_evidence(
-                article,
-                intents,
+            if phrase not in normalized_question:
+                continue
+
+            if phrase in normalized_title:
+
+                distinctive_points += (
+                    DISTINCTIVE_PHRASE_BONUS
+                )
+
+                distinctive_matches.append(
+                    phrase
+                )
+
+            elif phrase in normalized_content:
+
+                distinctive_points += 15
+
+                distinctive_matches.append(
+                    phrase
+                )
+
+        # =================================================
+        # QUERY TITLE MATCH
+        # =================================================
+
+        query_title_points = 0
+        query_title_matches = []
+
+        for phrase in NORMALIZED_IMPORTANT_PHRASES:
+
+            if phrase not in normalized_question:
+                continue
+
+            if phrase in normalized_title:
+
+                query_title_points += (
+                    LEGAL_TITLE_MATCH_BONUS
+                )
+
+                query_title_matches.append(
+                    phrase
+                )
+
+        # =================================================
+        # INTENT EVIDENCE
+        # =================================================
+
+        intent_evidence = set()
+
+        for intent in intents:
+
+            if intent in intent_coverage:
+
+                intent_evidence.add(intent)
+                continue
+
+            related_words = (
+                NORMALIZED_RELATED_WORDS.get(
+                    intent,
+                    (),
+                )
             )
-        )
+
+            for word in related_words:
+
+                if len(word) < 3:
+                    continue
+
+                if " " in word:
+
+                    if (
+                        word in normalized_title
+                        or word in normalized_content
+                    ):
+
+                        intent_evidence.add(
+                            intent
+                        )
+
+                        break
+
+                else:
+
+                    if (
+                        word_matches_text(
+                            normalized_title,
+                            word,
+                            text_tokens=title_tokens,
+                            base_tokens=title_base_tokens,
+                            normalized=True,
+                        )
+                        or
+                        word_matches_text(
+                            normalized_content,
+                            word,
+                            text_tokens=content_tokens,
+                            base_tokens=content_base_tokens,
+                            normalized=True,
+                        )
+                    ):
+
+                        intent_evidence.add(
+                            intent
+                        )
+
+                        break
+
+        # =================================================
+        # INTENT BONUS
+        # =================================================
 
         intent_bonus = 0
 
@@ -2059,15 +2044,19 @@ def rerank_candidates(
 
             if coverage >= 1.0:
 
-                intent_bonus = FULL_INTENT_BONUS
+                intent_bonus = (
+                    FULL_INTENT_BONUS
+                )
 
             elif coverage >= 0.5:
 
-                intent_bonus = PARTIAL_INTENT_BONUS
+                intent_bonus = (
+                    PARTIAL_INTENT_BONUS
+                )
 
-        # -----------------------------------------------------
-        # Keyword bonus
-        # -----------------------------------------------------
+        # =================================================
+        # KEYWORD BONUS
+        # =================================================
 
         if matched_keywords >= 5:
 
@@ -2085,9 +2074,9 @@ def rerank_candidates(
 
             keyword_bonus = 0
 
-        # -----------------------------------------------------
-        # Phrase bonus
-        # -----------------------------------------------------
+        # =================================================
+        # PHRASE BONUS
+        # =================================================
 
         if matched_phrases >= 3:
 
@@ -2105,25 +2094,29 @@ def rerank_candidates(
 
             phrase_bonus = 0
 
-        # -----------------------------------------------------
-        # Lexical quality
-        # -----------------------------------------------------
+        # =================================================
+        # LEXICAL QUALITY
+        # =================================================
 
         if lexical_score >= 0.25:
 
-            lexical_bonus = STRONG_LEXICAL_BONUS
+            lexical_bonus = (
+                STRONG_LEXICAL_BONUS
+            )
 
         elif lexical_score >= 0.10:
 
-            lexical_bonus = MEDIUM_LEXICAL_BONUS
+            lexical_bonus = (
+                MEDIUM_LEXICAL_BONUS
+            )
 
         else:
 
             lexical_bonus = 0
 
-        # -----------------------------------------------------
+        # =================================================
         # FINAL SCORE
-        # -----------------------------------------------------
+        # =================================================
 
         total_score = (
             semantic_points
@@ -2212,9 +2205,9 @@ def rerank_candidates(
                 sources,
         })
 
-    # ---------------------------------------------------------
-    # Ranking
-    # ---------------------------------------------------------
+    # =====================================================
+    # RANKING
+    # =====================================================
 
     ranked.sort(
         key=lambda item: (
@@ -2296,18 +2289,18 @@ def evidence_check(
             0,
         )
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Exact article
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if "exact" in sources:
 
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Semantic levels
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         strong_semantic = (
             semantic_score
@@ -2319,17 +2312,17 @@ def evidence_check(
             >= MEDIUM_SEMANTIC
         )
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Multi-source
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         multi_source = (
             len(sources) >= 2
         )
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Intent evidence
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         has_intent = (
             not intents
@@ -2342,9 +2335,9 @@ def evidence_check(
             == len(intents)
         )
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # Legal evidence
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         legal_evidence = (
             legal_score >= 15
@@ -2356,10 +2349,10 @@ def evidence_check(
             or query_title_score >= 20
         )
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 0
         # Distinctive legal phrase
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if (
             distinctive_phrase_score
@@ -2372,10 +2365,10 @@ def evidence_check(
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 1
         # Strong semantic + legal evidence
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if (
             strong_semantic
@@ -2386,10 +2379,10 @@ def evidence_check(
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 2
         # Multi-source agreement
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if (
             multi_source
@@ -2402,10 +2395,10 @@ def evidence_check(
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 3
         # Strong lexical
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if (
             lexical_score >= 0.20
@@ -2415,10 +2408,10 @@ def evidence_check(
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 4
         # Medium semantic
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if (
             medium_semantic
@@ -2432,10 +2425,10 @@ def evidence_check(
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 5
         # Strong phrase
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if (
             phrase_score >= 28
@@ -2445,10 +2438,10 @@ def evidence_check(
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 6
         # Strong keyword
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if (
             keyword_score >= 28
@@ -2458,20 +2451,20 @@ def evidence_check(
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 7
         # Strong number evidence
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if number_score >= 35:
 
             verified.append(item)
             continue
 
-        # -----------------------------------------------------
+        # -------------------------------------------------
         # RULE 8
         # General question
-        # -----------------------------------------------------
+        # -------------------------------------------------
 
         if not intents:
 
@@ -2524,9 +2517,9 @@ def calculate_confidence(
         0,
     )
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # High confidence
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     if "exact" in sources:
         return "high"
@@ -2535,33 +2528,29 @@ def calculate_confidence(
         distinctive_phrase_score
         >= DISTINCTIVE_PHRASE_BONUS
     ):
-
         return "high"
 
     if (
         semantic >= STRONG_SEMANTIC
         and legal >= 15
     ):
-
         return "high"
 
     if (
         len(sources) >= 2
         and legal >= 15
     ):
-
         return "high"
 
     if (
         lexical >= 0.20
         and legal >= 15
     ):
-
         return "high"
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # Medium confidence
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     if (
         semantic >= MEDIUM_SEMANTIC
@@ -2569,7 +2558,6 @@ def calculate_confidence(
         or top["concept_score"] >= 18
         or top["phrase_score"] >= 10
     ):
-
         return "medium"
 
     return "low"
@@ -2610,7 +2598,6 @@ def select_diverse_articles(
             law_id is not None
             and seen_laws[law_id] >= 3
         ):
-
             continue
 
         selected.append(article)
@@ -2636,9 +2623,9 @@ def select_final_articles(
     selected_items = []
     seen_ids = set()
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # VERIFIED FIRST
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     for item in verified:
 
@@ -2653,9 +2640,9 @@ def select_final_articles(
         selected_items.append(item)
         seen_ids.add(article.id)
 
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
     # FALLBACK
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
 
     if len(selected_items) < limit:
 
@@ -2681,7 +2668,6 @@ def select_final_articles(
                 "sources"
             ]
 
-            # Tamamilə zəif semantic candidate
             if (
                 semantic_score
                 < MIN_SEMANTIC_SCORE
@@ -2689,29 +2675,76 @@ def select_final_articles(
                 < 0.05
                 and sources == {"semantic"}
             ):
-
                 continue
 
             selected_items.append(item)
             seen_ids.add(article.id)
 
-    # ---------------------------------------------------------
-    # Extract articles
-    # ---------------------------------------------------------
+    # -----------------------------------------------------
+    # DIVERSITY
+    # -----------------------------------------------------
 
-    articles = [
+    selected_articles = [
         item["article"]
         for item in selected_items
     ]
 
-    # ---------------------------------------------------------
-    # Diversity
-    # ---------------------------------------------------------
-
-    return select_diverse_articles(
-        articles,
+    diverse_articles = select_diverse_articles(
+        selected_articles,
         limit,
     )
+
+    # -----------------------------------------------------
+    # Fill if diversity removed results
+    # -----------------------------------------------------
+
+    if len(diverse_articles) < limit:
+
+        existing_ids = {
+            article.id
+            for article in diverse_articles
+        }
+
+        for item in ranked:
+
+            if len(diverse_articles) >= limit:
+                break
+
+            article = item["article"]
+
+            if article.id in existing_ids:
+                continue
+
+            semantic_score = item[
+                "semantic_score"
+            ]
+
+            lexical_score = item[
+                "lexical_score"
+            ]
+
+            sources = item[
+                "sources"
+            ]
+
+            if (
+                semantic_score
+                < MIN_SEMANTIC_SCORE
+                and lexical_score
+                < 0.05
+                and sources == {"semantic"}
+            ):
+                continue
+
+            diverse_articles.append(
+                article
+            )
+
+            existing_ids.add(
+                article.id
+            )
+
+    return diverse_articles[:limit]
 
 
 # =========================================================
@@ -2904,8 +2937,6 @@ def search_articles(
     # 3. SEMANTIC SEARCH
     # =====================================================
 
-    # Əgər konkret maddə nömrəsi tapılıbsa,
-    # lazımsız embedding API çağırışını etmirik.
     if exact_results:
 
         semantic_results = []
