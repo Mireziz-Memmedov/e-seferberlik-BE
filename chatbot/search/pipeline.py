@@ -189,7 +189,7 @@ def search(
 
             article_number = getattr(
                 article,
-                "article_number",
+                "number",
                 "",
             )
 
@@ -197,7 +197,8 @@ def search(
                 str(article_number or "")
             )
 
-            for target_number in article_numbers:
+            for target_number in arti
+            cle_numbers:
 
                 if normalize_text(
                     str(target_number)

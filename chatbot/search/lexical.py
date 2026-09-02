@@ -27,7 +27,7 @@ def lexical_search(query: str, limit: int = 30):
                        TrigramSimilarity("title", normalized_query)
         )
         .filter(similarity__gt=0.05)
-        .only("id", "title", "content", "law_id", "article_number")
+        .only("id", "title", "content", "law_id", "number")
         .order_by("-similarity")[:limit]
     )
 
