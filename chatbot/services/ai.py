@@ -48,7 +48,9 @@ def ask_ai(question):
 
     context_parts = []
 
-    for article in articles:
+    for result in articles:
+
+        article = result["article"]
 
         content = article.content or ""
 
