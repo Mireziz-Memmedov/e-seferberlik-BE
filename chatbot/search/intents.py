@@ -343,6 +343,13 @@ INTENT_KEYWORDS = {
         "saglamliq", "xestelik", "xesteliye", "xesteliyi", 
         "xeste", "tibbi", "xesteliy", "problemi"
     },
+    "seferberlik": {
+    "seferberlik",
+    "seferberliye",
+    "seferberlikde",
+    "seferberlikden",
+    "seferberliyin",
+    },
     "herbi_xidmet": {
         "herbi", "xidmet", "xidmete", "xidmetden"
     },
@@ -418,7 +425,7 @@ def detect_question_type(intents: set[str], article_numbers: list[str] | None = 
     if "mohlet" in intents:
         return "mohlet"
 
-    for single in ("tehsil", "saglamliq", "aile", "ehtiyat", "azadetme", "cagiris", "herbi_xidmet"):
+    for single in ("tehsil", "saglamliq", "aile", "ehtiyat", "azadetme", "cagiris", "herbi_xidmet","seferberlik"):
         if single in intents:
             return single
 
@@ -477,6 +484,8 @@ def detect_intents(
             intents.add("mohlet")
         elif word.startswith("azad"):
             intents.add("azadetme")
+        elif word.startswith("seferberlik"):
+            intents.add("seferberlik")
 
     return intents
 

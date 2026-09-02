@@ -17,7 +17,7 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 
 SEMANTIC_LIMIT = 20
 MAX_EMBEDDING_INPUT = 12000
-MAX_DISTANCE = 0.40
+MAX_DISTANCE = 0.60
 
 
 def get_embedding(text: str) -> List[float]:

@@ -24,7 +24,6 @@ def search(
     # =========================================================
 
     normalized = normalize_text(query)
-
     keywords = tokenize(normalized)
 
     # =========================================================
@@ -60,9 +59,11 @@ def search(
     # =========================================================
 
     semantic_results = hybrid_search(
-        normalized,
+        query,
         limit=20,
     )
+
+    question_type = analysis.get("question_type", "general")
 
     # =========================================================
     # 6. LEXICAL SEARCH
@@ -197,8 +198,7 @@ def search(
                 str(article_number or "")
             )
 
-            for target_number in arti
-            cle_numbers:
+            for target_number in article_numbers:
 
                 if normalize_text(
                     str(target_number)
@@ -216,11 +216,20 @@ def search(
         limit=20,
     )
 
-    # =========================================================
-    # 12. FINAL SELECTION
-    # =========================================================
+    print("=== DEBUG SEARCH ===")
+    print("RESULTS BEFORE RERANK:", len(results))
+    print("RERANKED:", len(reranked))
+    print("RERANKED DATA:", [
+        (x["article"].number, x.get("score"))
+        for x in reranked[:10]
+    ])
 
-    return select_results(
+    selected = select_results(
         reranked,
         limit=limit,
     )
+
+    print("SELECTED:", len(selected))
+    print("SELECTED DATA:", selected)
+
+    return selected
